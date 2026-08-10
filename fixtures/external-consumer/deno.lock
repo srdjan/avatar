@@ -43,7 +43,7 @@
   },
   "workspace": {
     "links": {
-      "jsr:@srdjan/avatar@0.1.0": {
+      "jsr:@srdjan/avatar@0.2.0": {
         "dependencies": [
           "npm:@dicebear/avataaars-neutral@9.4.2",
           "npm:@dicebear/core@9.4.3",

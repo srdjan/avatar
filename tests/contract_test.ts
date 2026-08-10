@@ -57,7 +57,7 @@ Deno.test("asset manifest is complete, typed, readable, and byte-pinned", async 
 Deno.test("public package boundary has exactly three entry points", async () => {
   const config = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
   assertEquals(config.name, "@srdjan/avatar");
-  assertEquals(config.version, "0.1.0");
+  assertEquals(config.version, "0.2.0");
   assertEquals(config.exports, {
     ".": "./mod.ts",
     "./server": "./server/mod.ts",
