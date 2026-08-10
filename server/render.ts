@@ -169,10 +169,10 @@ function rigDataAttrs(input: RenderRigInput): string {
     ...reactionDataAttrs("preceding", input.precedingReaction),
     ...reactionDataAttrs("micro", input.microReaction),
   ];
-  if (input.rigKind === "bot" && p.amplitudeScale !== 1) {
-    attrs.push(`style="--seat-amplitude-scale: ${p.amplitudeScale}"`);
-  }
   if (input.rigKind === "bot") {
+    if (p.amplitudeScale !== 1) {
+      attrs.push(`style="--seat-amplitude-scale: ${p.amplitudeScale}"`);
+    }
     attrs.push(`data-reaction-bot-emotion="${esc(input.reactionBotEmotion ?? "")}"`);
     attrs.push(`data-micro-bot-emotion="${esc(input.microBotEmotion ?? "")}"`);
   }
@@ -221,16 +221,28 @@ type ReactionAttributes = Readonly<{
   id: number;
 }>;
 
+const NO_REACTION_ATTRIBUTES = Object.freeze({
+  kind: "",
+  expression: "",
+  intensity: 0,
+  motion: "",
+  durationMs: 0,
+  confidence: 1,
+  voiceCue: "",
+  id: 0,
+}) satisfies ReactionAttributes;
+
 function reactionAttributes(reaction: ReactionSpec | null): ReactionAttributes {
+  if (reaction === null) return NO_REACTION_ATTRIBUTES;
   return {
-    kind: reaction?.kind ?? "",
-    expression: reaction?.expression ?? "",
-    intensity: reaction?.intensity ?? 0,
-    motion: reaction?.motion ?? "",
-    durationMs: reaction?.durationMs ?? 0,
-    confidence: clampNumber(reaction?.confidence ?? 1, 0, 1),
-    voiceCue: reaction?.voiceCue ?? "",
-    id: reaction?.id ?? 0,
+    kind: reaction.kind ?? "",
+    expression: reaction.expression,
+    intensity: reaction.intensity,
+    motion: reaction.motion,
+    durationMs: reaction.durationMs,
+    confidence: clampNumber(reaction.confidence ?? 1, 0, 1),
+    voiceCue: reaction.voiceCue,
+    id: reaction.id,
   };
 }
 

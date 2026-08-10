@@ -3,7 +3,7 @@ import { AVATAR_ASSETS, AVATAR_AUDIO_ASSETS, DEFAULT_VOICE_PACK } from "@srdjan/
 
 const EXPECTED_HASHES: Readonly<Record<keyof typeof AVATAR_ASSETS, string>> = {
   facialRigScript: "c4aaba60b5b7d8410d7b557c1663d98080dfbd60aaab07d03fcbc3358e99a657",
-  facialRigStyles: "83305f718573f3a8371e38b870856c074c72fbc9419585d4fd2138ff289ab9b7",
+  facialRigStyles: "2f4a5539f2a75e7d75077510c4972646084fe4afe1e0703406ac06b2f319a125",
   haha: "838c4863398dba33f794faf5a640d592fa577e420a57114ef7d113d146532ca2",
   hahaha: "20351581b4b41bb7ed9eae615793598d9140c7202a5557f548d7d903aedb72cc",
   nenene: "f218486f54ad12c226d31bbc065251bb6187e2fbdd08c60db040eb075c193bc3",
@@ -94,9 +94,29 @@ Deno.test("public root import graph stays inside the package and excludes Prefer
   const specifiers = info.modules.map((module) => module.specifier);
   assert(specifiers.includes(publicRoot.href));
   const packageRoot = new URL("../", import.meta.url).href;
-  for (const specifier of specifiers.filter((specifier) => specifier.startsWith("file:"))) {
+  const localSpecifiers = specifiers.filter((specifier) => specifier.startsWith("file:"));
+  for (const specifier of localSpecifiers) {
     assert(specifier.startsWith(packageRoot), `outside package root: ${specifier}`);
   }
+  assertEquals(
+    localSpecifiers.map((specifier) => specifier.slice(packageRoot.length)).sort(),
+    [
+      "internal/generator.ts",
+      "mod.ts",
+      "server/avataaars_preset.ts",
+      "server/decompose.ts",
+      "types.ts",
+    ],
+  );
+  assertEquals(
+    specifiers.filter((specifier) => specifier.startsWith("npm:")).sort(),
+    [
+      "npm:/@dicebear/avataaars-neutral@9.4.2",
+      "npm:/@dicebear/core@9.4.3",
+      "npm:/@dicebear/lorelei-neutral@9.4.2",
+    ],
+  );
+  assertEquals(specifiers.length, 8);
   assertEquals(
     specifiers.some((specifier) => specifier.toLowerCase().includes("preferans")),
     false,

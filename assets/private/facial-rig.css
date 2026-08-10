@@ -11,7 +11,7 @@
    active expression so the client only toggles classes. Photos render only
    .avatar-base and ride the wrapper-level outline tint and body motion.
 
-   The companion JS (window.FacialRig in client/facial-rig.js) writes
+   The companion JS (window.FacialRig in assets/private/facial-rig.js) writes
    --idle-blink-sy / --idle-gaze-tx / --idle-drift-tx / --idle-brow-ty /
    --idle-mouth-* / --idle-nose-* / --rig-breath-* / --rig-light-* and inline
    transforms on .face-* groups.

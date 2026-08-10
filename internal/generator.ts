@@ -1,7 +1,8 @@
 import { createAvatar } from "@dicebear/core";
 import * as avataaarsNeutral from "@dicebear/avataaars-neutral";
 import * as loreleiNeutral from "@dicebear/lorelei-neutral";
-import { avataaarsPreset, decomposeFaceFeatures } from "../server/mod.ts";
+import { avataaarsPreset } from "../server/avataaars_preset.ts";
+import { decomposeFaceFeatures } from "../server/decompose.ts";
 import type {
   Avatar,
   AvatarExpression,

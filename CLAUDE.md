@@ -5,11 +5,11 @@ repository.
 
 ## What this is
 
-`@srdjan/avatar` is a local-only Deno package (no remote, no registry, no publish task) that
-produces deterministic DiceBear avatars, renders the server-side facial-rig markup, and ships the
-browser runtime that animates it. Consumers link it from their own `deno.json` with
-`"links": ["../avatar"]`. Read `ASSUMPTIONS.md` before you change a contract: it records the
-invariants the tests enforce.
+`@srdjan/avatar` is an intentionally unpublished Deno package with an `origin` remote, but no
+registry fallback or publish task. It produces deterministic DiceBear avatars, renders the
+server-side facial-rig markup, and ships the browser runtime that animates it. Consumers link it
+from their own `deno.json` with `"links": ["../avatar"]`. Read `ASSUMPTIONS.md` before you change a
+contract: it records the invariants the tests enforce.
 
 ## Commands
 
@@ -30,8 +30,9 @@ deno test -A tests/browser_test.ts --filter "iPhone idle mode"
 `deno task lint` runs twice: once with the project config, once with a relaxed rule set for
 `assets/private/facial-rig.js`, which is a hand-authored classic script and not a module.
 
-A version bump must change three places together: `deno.json`, the `config.version` assertion in
-`tests/contract_test.ts`, and the version line in `README.md`.
+A version bump must change four places together: `deno.json`, the `config.version` assertion in
+`tests/contract_test.ts`, the version line in `README.md`, and the linked package version recorded
+in `fixtures/external-consumer/deno.lock`. Refresh that lock through the consumer task.
 
 ## Architecture
 
