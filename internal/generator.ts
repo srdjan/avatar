@@ -15,6 +15,13 @@ import type {
 
 const DEFAULT_HUMAN_CACHE_SIZE = 128;
 
+const VALID_STEADY_EYEBROWS: ReadonlySet<unknown> = new Set([
+  undefined,
+  "default",
+  "raisedExcitedNatural",
+]);
+const VALID_STEADY_MOUTHS: ReadonlySet<unknown> = new Set(["serious", "twinkle"]);
+
 const AQUILINE_NOSE = '<path fill-rule="evenodd" clip-rule="evenodd" ' +
   'd="M27 0 c-2 5 -4 11 -3 15 c1 3 6 4 8 2 c2 -1 1 -3 -2 -3 ' +
   'c-3 0 -4 -3 -3 -6 c1 -4 2 -6 0 -8 z" ' +
@@ -57,6 +64,36 @@ type CustomOptions<Catalog extends BotAvatarProfileCatalog> = Readonly<{
   profiles: Catalog;
 }>;
 
+declare const validatedProfileId: unique symbol;
+declare const validatedProfileSeed: unique symbol;
+
+type ValidatedProfileId = string & { readonly [validatedProfileId]: true };
+type ValidatedProfileSeed = string & { readonly [validatedProfileSeed]: true };
+
+type ValidatedBotProfile = Readonly<{
+  id: ValidatedProfileId;
+  seed: ValidatedProfileSeed;
+  steady: BotAvatarProfile["steady"];
+  faceShape: BotAvatarProfile["faceShape"];
+}>;
+
+type ValidatedProfileCatalog = Readonly<Record<string, ValidatedBotProfile>>;
+
+type DiceBearAvatarCapability = Readonly<{
+  renderHuman: (seed: string, options: loreleiNeutral.Options) => string;
+  renderBot: (seed: ValidatedProfileSeed, options: avataaarsNeutral.Options) => string;
+}>;
+
+type GeneratorConfig = Readonly<{
+  humanCacheLimit: number;
+  profiles: ValidatedProfileCatalog;
+}>;
+
+const DICE_BEAR_AVATARS: DiceBearAvatarCapability = Object.freeze({
+  renderHuman: (seed, options) => createAvatar(loreleiNeutral, { seed, ...options }).toDataUri(),
+  renderBot: (seed, options) => createAvatar(avataaarsNeutral, { seed, ...options }).toString(),
+});
+
 export function createAvatarGenerator(
   options?: BuiltInOptions,
 ): AvatarGenerator<BotAvatarProfileId>;
@@ -66,12 +103,27 @@ export function createAvatarGenerator<const Catalog extends BotAvatarProfileCata
 export function createAvatarGenerator(
   options: BuiltInOptions | CustomOptions<BotAvatarProfileCatalog> = {},
 ): AvatarGenerator<string> {
+  return createGenerator(parseGeneratorConfig(options), DICE_BEAR_AVATARS);
+}
+
+function parseGeneratorConfig(
+  options: BuiltInOptions | CustomOptions<BotAvatarProfileCatalog>,
+): GeneratorConfig {
   const humanCacheLimit = options.humanCacheLimit ?? DEFAULT_HUMAN_CACHE_SIZE;
   if (!Number.isSafeInteger(humanCacheLimit) || humanCacheLimit < 1) {
     throw new TypeError("humanCacheLimit must be a positive safe integer");
   }
 
-  const profiles = validateAndSnapshotProfiles(options.profiles ?? BUILT_IN_BOT_PROFILES);
+  return Object.freeze({
+    humanCacheLimit,
+    profiles: parseProfileCatalog(options.profiles ?? BUILT_IN_BOT_PROFILES),
+  });
+}
+
+function createGenerator(
+  config: GeneratorConfig,
+  avatars: DiceBearAvatarCapability,
+): AvatarGenerator<string> {
   const humanCache = new Map<string, Avatar>();
   const botCache = new Map<string, Avatar>();
 
@@ -81,14 +133,14 @@ export function createAvatarGenerator(
       const cached = humanCache.get(input.seed);
       if (cached) return cached;
 
-      const expressions = createHumanExpressionMap(input.seed);
+      const expressions = createHumanExpressionMap(avatars, input.seed);
       const result: Avatar = {
         kind: "human-generated",
         style: "lorelei-neutral",
         src: expressions.neutral,
         expressions,
       };
-      if (humanCache.size >= humanCacheLimit) {
+      if (humanCache.size >= config.humanCacheLimit) {
         const oldest = humanCache.keys().next();
         if (!oldest.done) humanCache.delete(oldest.value);
       }
@@ -99,10 +151,12 @@ export function createAvatarGenerator(
     forBot: (profileId) => {
       const cached = botCache.get(profileId);
       if (cached) return cached;
-      const profile = Object.hasOwn(profiles, profileId) ? profiles[profileId] : undefined;
+      const profile = Object.hasOwn(config.profiles, profileId)
+        ? config.profiles[profileId]
+        : undefined;
       if (!profile) throw new RangeError(`unknown bot avatar profile: ${profileId}`);
 
-      const emotions = createBotEmotionMap(profile);
+      const emotions = createBotEmotionMap(avatars, profile);
       const result: Avatar = {
         kind: "bot",
         style: "avataaars-neutral",
@@ -115,95 +169,110 @@ export function createAvatarGenerator(
   };
 }
 
-function validateAndSnapshotProfiles(
+function parseProfileCatalog(
   catalog: BotAvatarProfileCatalog,
-): Readonly<Record<string, BotAvatarProfile>> {
+): ValidatedProfileCatalog {
   const entries = Object.entries(catalog);
   if (entries.length === 0) throw new TypeError("profiles must not be empty");
 
   return Object.freeze(Object.fromEntries(entries.map(([catalogId, profile]) => {
-    if (catalogId.length === 0 || profile.id !== catalogId) {
+    const { id, seed, steady, faceShape } = profile;
+    if (catalogId.length === 0 || id !== catalogId) {
       throw new TypeError(`profile id must match catalog key: ${catalogId}`);
     }
-    if (profile.seed.length === 0) {
+    if (typeof seed !== "string" || seed.length === 0) {
       throw new TypeError(`profile seed must not be empty: ${catalogId}`);
     }
-    validateSteadyFace(profile);
-    const faceShape = snapshotFaceShape(profile);
+    const steadySnapshot = snapshotSteadyFace(id, steady);
+    const faceShapeSnapshot = snapshotFaceShape(id, faceShape);
     return [
       catalogId,
       Object.freeze({
-        id: profile.id,
-        seed: profile.seed,
-        steady: Object.freeze({ ...profile.steady }),
-        faceShape,
+        id: id as ValidatedProfileId,
+        seed: seed as ValidatedProfileSeed,
+        steady: steadySnapshot,
+        faceShape: faceShapeSnapshot,
       }),
     ] as const;
   })));
 }
 
-function validateSteadyFace(profile: BotAvatarProfile): void {
-  const { eyes, eyebrows, mouth } = profile.steady;
-  if (eyes !== "default") throw new TypeError(`invalid steady eyes: ${profile.id}`);
-  if (eyebrows !== undefined && eyebrows !== "default" && eyebrows !== "raisedExcitedNatural") {
-    throw new TypeError(`invalid steady eyebrows: ${profile.id}`);
+function snapshotSteadyFace(
+  profileId: string,
+  steady: BotAvatarProfile["steady"],
+): BotAvatarProfile["steady"] {
+  const { eyes, eyebrows, mouth } = steady;
+  if (eyes !== "default") throw new TypeError(`invalid steady eyes: ${profileId}`);
+  if (!VALID_STEADY_EYEBROWS.has(eyebrows)) {
+    throw new TypeError(`invalid steady eyebrows: ${profileId}`);
   }
-  if (mouth !== "serious" && mouth !== "twinkle") {
-    throw new TypeError(`invalid steady mouth: ${profile.id}`);
+  if (!VALID_STEADY_MOUTHS.has(mouth)) {
+    throw new TypeError(`invalid steady mouth: ${profileId}`);
   }
+  return Object.freeze(
+    eyebrows === undefined ? { eyes, mouth } : { eyes, eyebrows, mouth },
+  );
 }
 
-function snapshotFaceShape(profile: BotAvatarProfile): BotAvatarProfile["faceShape"] {
-  const tag = (profile.faceShape as { readonly tag?: unknown } | null)?.tag;
+function snapshotFaceShape(
+  profileId: string,
+  faceShape: BotAvatarProfile["faceShape"],
+): BotAvatarProfile["faceShape"] {
+  const tag = (faceShape as { readonly tag?: unknown } | null)?.tag;
   switch (tag) {
     case "default":
       return Object.freeze({ tag: "default" });
     case "aquiline":
       return Object.freeze({ tag: "aquiline" });
     default:
-      throw new TypeError(`invalid face shape: ${profile.id}: ${JSON.stringify(tag)}`);
+      throw new TypeError(`invalid face shape: ${profileId}: ${JSON.stringify(tag)}`);
   }
 }
 
-function createHumanExpressionMap(seed: string): Readonly<Record<AvatarExpression, string>> {
+function createHumanExpressionMap(
+  avatars: DiceBearAvatarCapability,
+  seed: string,
+): Readonly<Record<AvatarExpression, string>> {
   return {
-    neutral: humanVariant(seed, {}),
-    focused: humanVariant(seed, { eyebrows: ["variant03"], mouth: ["sad07"] }),
-    happiness: humanVariant(seed, {
+    neutral: avatars.renderHuman(seed, {}),
+    focused: avatars.renderHuman(seed, { eyebrows: ["variant03"], mouth: ["sad07"] }),
+    happiness: avatars.renderHuman(seed, {
       eyebrows: ["variant07", "variant08"],
       mouth: ["happy01", "happy02", "happy03"],
     }),
-    sadness: humanVariant(seed, {
+    sadness: avatars.renderHuman(seed, {
       eyebrows: ["variant05", "variant06"],
       mouth: ["sad01", "sad02"],
     }),
-    anger: humanVariant(seed, {
+    anger: avatars.renderHuman(seed, {
       eyebrows: ["variant02", "variant03"],
       mouth: ["sad03", "sad05"],
     }),
-    fear: humanVariant(seed, {
+    fear: avatars.renderHuman(seed, {
       eyebrows: ["variant09", "variant10"],
       mouth: ["sad06", "happy18"],
     }),
-    surprise: humanVariant(seed, {
+    surprise: avatars.renderHuman(seed, {
       eyebrows: ["variant11", "variant12"],
       mouth: ["happy10", "happy11"],
     }),
   };
 }
 
-function humanVariant(seed: string, options: loreleiNeutral.Options): string {
-  return createAvatar(loreleiNeutral, { seed, ...options }).toDataUri();
-}
-
-function createBotEmotionMap(profile: BotAvatarProfile): Readonly<Record<BotEmotion, string>> {
+function createBotEmotionMap(
+  avatars: DiceBearAvatarCapability,
+  profile: ValidatedBotProfile,
+): Readonly<Record<BotEmotion, string>> {
   return {
-    happy: createBotEmotionAvatar(profile, { eyes: ["happy"], mouth: ["smile"] }),
-    laughing: createBotEmotionAvatar(profile, { eyes: ["xDizzy"], mouth: ["tongue"] }),
-    sad: createBotEmotionAvatar(profile, { eyes: ["cry"], mouth: ["sad"] }),
-    dizzy: createBotEmotionAvatar(profile, { eyes: ["xDizzy"], mouth: ["grimace"] }),
-    focused: createBotEmotionAvatar(profile, steadyOptions(profile)),
-    angry: createBotEmotionAvatar(profile, {
+    happy: createBotEmotionAvatar(avatars, profile, { eyes: ["happy"], mouth: ["smile"] }),
+    laughing: createBotEmotionAvatar(avatars, profile, {
+      eyes: ["xDizzy"],
+      mouth: ["tongue"],
+    }),
+    sad: createBotEmotionAvatar(avatars, profile, { eyes: ["cry"], mouth: ["sad"] }),
+    dizzy: createBotEmotionAvatar(avatars, profile, { eyes: ["xDizzy"], mouth: ["grimace"] }),
+    focused: createBotEmotionAvatar(avatars, profile, steadyOptions(profile)),
+    angry: createBotEmotionAvatar(avatars, profile, {
       eyes: ["squint"],
       eyebrows: ["angryNatural"],
       mouth: ["serious"],
@@ -211,7 +280,7 @@ function createBotEmotionMap(profile: BotAvatarProfile): Readonly<Record<BotEmot
   };
 }
 
-function steadyOptions(profile: BotAvatarProfile): avataaarsNeutral.Options {
+function steadyOptions(profile: ValidatedBotProfile): avataaarsNeutral.Options {
   return profile.steady.eyebrows === undefined
     ? { eyes: [profile.steady.eyes], mouth: [profile.steady.mouth] }
     : {
@@ -222,10 +291,11 @@ function steadyOptions(profile: BotAvatarProfile): avataaarsNeutral.Options {
 }
 
 function createBotEmotionAvatar(
-  profile: BotAvatarProfile,
+  avatars: DiceBearAvatarCapability,
+  profile: ValidatedBotProfile,
   options: avataaarsNeutral.Options,
 ): string {
-  const svg = createAvatar(avataaarsNeutral, { seed: profile.seed, ...options }).toString();
+  const svg = avatars.renderBot(profile.seed, options);
   return applyFaceShape(decomposeFaceFeatures(svg, avataaarsPreset), profile.faceShape);
 }
 

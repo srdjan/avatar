@@ -174,6 +174,51 @@ Deno.test("custom profile catalogs deeply snapshot caller-owned profile data", (
   assertEquals(avatar, expected);
 });
 
+Deno.test("custom profile parsing observes each property once", () => {
+  let seedReads = 0;
+  const profile = {
+    id: "custom",
+    get seed(): string {
+      seedReads += 1;
+      return seedReads === 1 ? "Mason" : "Jocelyn";
+    },
+    steady: { eyes: "default", eyebrows: "default", mouth: "serious" },
+    faceShape: { tag: "default" },
+  };
+  const generator = createAvatarGenerator({
+    profiles: { custom: profile } as unknown as BotAvatarProfileCatalog,
+  });
+  const expected = createAvatarGenerator({
+    profiles: {
+      custom: {
+        id: "custom",
+        seed: "Mason",
+        steady: { eyes: "default", eyebrows: "default", mouth: "serious" },
+        faceShape: { tag: "default" },
+      },
+    },
+  }).forBot("custom");
+
+  assertEquals(seedReads, 1);
+  assertEquals(generator.forBot("custom"), expected);
+  assertEquals(seedReads, 1);
+});
+
+Deno.test("custom profile catalogs support an own __proto__ entry", () => {
+  const generator = createAvatarGenerator({
+    profiles: {
+      ["__proto__"]: {
+        id: "__proto__",
+        seed: "Mason",
+        steady: { eyes: "default", mouth: "serious" },
+        faceShape: { tag: "default" },
+      },
+    },
+  });
+
+  assertEquals(generator.forBot("__proto__").kind, "bot");
+});
+
 Deno.test("generator rejects every invalid cache and custom-profile boundary", () => {
   for (
     const [label, humanCacheLimit] of [
@@ -201,6 +246,8 @@ Deno.test("generator rejects every invalid cache and custom-profile boundary", (
   const invalidProfiles = [
     ["empty profile id", "", { ...validProfile(), id: "" }, "must match catalog key"],
     ["empty seed", "custom", { ...validProfile(), seed: "" }, "seed must not be empty"],
+    ["numeric seed", "custom", { ...validProfile(), seed: 42 }, "seed must not be empty"],
+    ["object seed", "custom", { ...validProfile(), seed: {} }, "seed must not be empty"],
     [
       "invalid steady eyes",
       "custom",
