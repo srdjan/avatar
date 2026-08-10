@@ -32,7 +32,7 @@
     "fmt": "deno fmt --check",
     "lint": "deno lint && deno lint --no-config --rules-exclude=no-window,no-window-prefix,no-var,no-inner-declarations,no-unused-vars assets/private/facial-rig.js",
     "type": "deno check mod.ts server/mod.ts assets/mod.ts tests/unit_test.ts tests/contract_test.ts tests/browser_test.ts",
-    "unit": "deno test --allow-read tests/unit_test.ts tests/contract_test.ts",
+    "unit": "deno test --allow-read --allow-run=deno tests/unit_test.ts tests/contract_test.ts",
     "playwright:install": "deno run -A npm:playwright@1.60.0 install chromium",
     "browser": "deno task playwright:install && deno test -A tests/browser_test.ts",
     "consumer": "deno task --config fixtures/external-consumer/deno.json check",

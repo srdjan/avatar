@@ -9,8 +9,10 @@ import {
 import {
   AVATAR_EXPRESSIONS,
   BOT_EMOTIONS,
+  type BotAvatarProfileCatalog,
   BUILT_IN_BOT_PROFILES,
   createAvatarGenerator,
+  type ReactionSpec,
 } from "@srdjan/avatar";
 import {
   avataaarsPreset,
@@ -139,16 +141,98 @@ Deno.test("factory caches preserve identity, evict FIFO, and stay isolated", () 
   assertNotStrictEquals(secondFactory.forHuman({ picture: null, seed: "oldest" }), regenerated);
 });
 
-Deno.test("custom profile catalogs are typed, validated once, and snapshotted", () => {
+Deno.test("custom profile catalogs deeply snapshot caller-owned profile data", () => {
   const mutableProfile = {
     id: "custom",
     seed: "Mason",
-    steady: { eyes: "default", mouth: "serious" },
+    steady: { eyes: "default", eyebrows: "default", mouth: "serious" },
     faceShape: { tag: "default" },
-  } as const;
-  const generator = createAvatarGenerator({ profiles: { custom: mutableProfile } });
+  };
+  const generator = createAvatarGenerator({
+    profiles: { custom: mutableProfile } as unknown as BotAvatarProfileCatalog,
+  });
+  const expected = createAvatarGenerator({
+    profiles: {
+      custom: {
+        id: "custom",
+        seed: "Mason",
+        steady: { eyes: "default", eyebrows: "default", mouth: "serious" },
+        faceShape: { tag: "default" },
+      },
+    },
+  }).forBot("custom");
+
+  mutableProfile.id = "renamed";
+  mutableProfile.seed = "Jocelyn";
+  mutableProfile.steady.eyes = "unsupported";
+  mutableProfile.steady.eyebrows = "raisedExcitedNatural";
+  mutableProfile.steady.mouth = "twinkle";
+  mutableProfile.faceShape.tag = "aquiline";
+
   const avatar = generator.forBot("custom");
   assertEquals(avatar.kind, "bot");
+  assertEquals(avatar, expected);
+});
+
+Deno.test("generator rejects every invalid cache and custom-profile boundary", () => {
+  for (
+    const [label, humanCacheLimit] of [
+      ["zero", 0],
+      ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+      ["non-finite", Number.NaN],
+      ["negative", -1],
+      ["non-integer", 1.5],
+    ] as const
+  ) {
+    const error = assertThrows(
+      () => createAvatarGenerator({ humanCacheLimit }),
+      TypeError,
+      "positive safe integer",
+    );
+    assertStringIncludes(error.message, "positive safe integer", label);
+  }
+
+  const validProfile = () => ({
+    id: "custom",
+    seed: "Mason",
+    steady: { eyes: "default", eyebrows: "default", mouth: "serious" },
+    faceShape: { tag: "default" },
+  });
+  const invalidProfiles = [
+    ["empty profile id", "", { ...validProfile(), id: "" }, "must match catalog key"],
+    ["empty seed", "custom", { ...validProfile(), seed: "" }, "seed must not be empty"],
+    [
+      "invalid steady eyes",
+      "custom",
+      { ...validProfile(), steady: { ...validProfile().steady, eyes: "closed" } },
+      "invalid steady eyes",
+    ],
+    [
+      "invalid steady eyebrows",
+      "custom",
+      { ...validProfile(), steady: { ...validProfile().steady, eyebrows: "angry" } },
+      "invalid steady eyebrows",
+    ],
+    [
+      "invalid steady mouth",
+      "custom",
+      { ...validProfile(), steady: { ...validProfile().steady, mouth: "smile" } },
+      "invalid steady mouth",
+    ],
+    ["malformed face shape", "custom", { ...validProfile(), faceShape: {} }, "invalid face shape"],
+    ["null face shape", "custom", { ...validProfile(), faceShape: null }, "invalid face shape"],
+  ] as const;
+  for (const [label, catalogId, profile, expectedMessage] of invalidProfiles) {
+    const error = assertThrows(
+      () =>
+        createAvatarGenerator({
+          profiles: { [catalogId]: profile } as unknown as BotAvatarProfileCatalog,
+        }),
+      TypeError,
+      expectedMessage,
+    );
+    assertStringIncludes(error.message, expectedMessage, label);
+  }
 
   assertThrows(
     () => createAvatarGenerator({ profiles: {} }),
@@ -156,18 +240,30 @@ Deno.test("custom profile catalogs are typed, validated once, and snapshotted", 
     "profiles must not be empty",
   );
   assertThrows(
-    () => createAvatarGenerator({ humanCacheLimit: 0 }),
-    TypeError,
-    "positive safe integer",
-  );
-  assertThrows(
     () =>
       createAvatarGenerator({
-        profiles: { wrong: { ...mutableProfile, id: "custom" } },
+        profiles: {
+          wrong: {
+            id: "custom",
+            seed: "Mason",
+            steady: { eyes: "default", mouth: "serious" },
+            faceShape: { tag: "default" },
+          },
+        },
       }),
     TypeError,
     "must match catalog key",
   );
+  const generator = createAvatarGenerator({
+    profiles: {
+      custom: {
+        id: "custom",
+        seed: "Mason",
+        steady: { eyes: "default", mouth: "serious" },
+        faceShape: { tag: "default" },
+      },
+    },
+  });
   assertThrows(
     () => generator.forBot("toString" as "custom"),
     RangeError,
@@ -177,20 +273,6 @@ Deno.test("custom profile catalogs are typed, validated once, and snapshotted", 
     () => generator.forBot("constructor" as "custom"),
     RangeError,
     "unknown bot avatar profile: constructor",
-  );
-  assertThrows(
-    () =>
-      createAvatarGenerator({
-        profiles: {
-          invalid: {
-            ...mutableProfile,
-            id: "invalid",
-            faceShape: { tag: "unsupported" },
-          },
-        } as unknown as { readonly invalid: typeof mutableProfile },
-      }),
-    TypeError,
-    "invalid face shape: invalid",
   );
 });
 
@@ -216,6 +298,40 @@ Deno.test("feature decomposition tolerates a self-closing group inside a feature
   });
   assert(output.includes('<g class="face-eyes"><g/><circle/></g>'));
   assert(!missing.includes("face-eyes"));
+});
+
+Deno.test("feature decomposition reports exact missing-selector and unclosed-group payloads", () => {
+  const input = '<svg><g transform="unclosed"><circle/></svg>';
+  let missing: ReadonlyArray<{ className: string; transform: string }> = [];
+  const output = decomposeFaceFeatures(input, {
+    selectors: {
+      absent: { transform: "missing" },
+      broken: { transform: "unclosed" },
+    },
+    onMissing: (entries) => missing = entries,
+  });
+
+  assertEquals(output, input);
+  assertEquals(missing, [
+    { className: "absent", transform: "missing" },
+    { className: "broken", transform: "unclosed" },
+  ]);
+});
+
+Deno.test("feature decomposition inserts overlays inside masks and skips SVGs without a close", () => {
+  const masked = '<svg><g mask="url(#face)"><rect/><g><circle/></g></g><path/></svg>';
+  const options = {
+    selectors: {},
+    overlays: [{ className: "face-overlay", markup: "<ellipse/>" }],
+  } as const;
+  assertEquals(
+    decomposeFaceFeatures(masked, options),
+    '<svg><g mask="url(#face)"><rect/><g><circle/></g>' +
+      '<g class="face-overlay"><ellipse/></g></g><path/></svg>',
+  );
+
+  const unclosedSvg = '<svg><g mask="url(#face)"></g>';
+  assertEquals(decomposeFaceFeatures(unclosedSvg, options), unclosedSvg);
 });
 
 Deno.test("generic expressions map totally onto bot emotions", () => {
@@ -248,12 +364,19 @@ Deno.test("SSR renders each avatar ADT branch and escapes caller text", () => {
   assert(bot.kind === "bot");
   const botHtml = renderFacialRig({
     ...common,
+    personality: { ...common.personality, amplitudeScale: 1.25 },
     rigKind: "bot",
     baseSvg: bot.src,
     expressionSvg: bot.emotions.happy,
     microSvg: bot.emotions.focused,
+    reactionBotEmotion: "happy",
+    microBotEmotion: "dizzy",
   });
   assert(botHtml.includes('data-rig-kind="bot"'));
+  assert(botHtml.includes('data-rig-signature="bot:'));
+  assert(botHtml.includes('style="--seat-amplitude-scale: 1.25"'));
+  assert(botHtml.includes('data-reaction-bot-emotion="happy"'));
+  assert(botHtml.includes('data-micro-bot-emotion="dizzy"'));
   assert(botHtml.includes('aria-label="East &lt;bot&gt; &quot;alert&quot;"'));
   assertEquals(botHtml.match(/class="avatar avatar-rigged/g)?.length, 3);
 
@@ -266,8 +389,12 @@ Deno.test("SSR renders each avatar ADT branch and escapes caller text", () => {
     expressionSrc: human.expressions.happiness,
     microSrc: human.expressions.focused,
     emotion: "happiness",
+    width: 48,
+    height: 52,
   });
   assertEquals(humanHtml.match(/<img /g)?.length, 3);
+  assertEquals(humanHtml.match(/width="48" height="52"/g)?.length, 3);
+  assert(humanHtml.includes('data-rig-signature="human-generated:'));
 
   const photoHtml = renderFacialRig({
     ...common,
@@ -276,13 +403,148 @@ Deno.test("SSR renders each avatar ADT branch and escapes caller text", () => {
     emotion: null,
   });
   assertEquals(photoHtml.match(/<img /g)?.length, 1);
+  assert(photoHtml.includes('width="40" height="40"'));
+  assert(photoHtml.includes('data-rig-signature="human-photo:'));
   assert(photoHtml.includes("x=1&amp;y=2"));
 });
 
-Deno.test("SSR escapes rig IDs and rejects active SVG markup", () => {
-  const generator = createAvatarGenerator();
-  const bot = generator.forBot("mason-steady");
-  assert(bot.kind === "bot");
+Deno.test("SSR serializes every reaction field and null reaction default", () => {
+  const reaction: ReactionSpec = {
+    kind: "turn",
+    expression: "happiness",
+    intensity: 3,
+    motion: "pop",
+    durationMs: 725,
+    confidence: 0.75,
+    voiceCue: "laugh",
+    id: 42,
+  };
+  const html = renderFacialRig({
+    id: "reaction-fields",
+    label: "Reaction fields",
+    reaction,
+    precedingReaction: null,
+    microReaction: null,
+    personality: { amplitudeScale: 1, durationScale: 1, audioProbability: 0.2 },
+    rigKind: "human-photo",
+    src: "photo-source",
+    emotion: null,
+  });
+  const active = {
+    kind: "turn",
+    expression: "happiness",
+    intensity: "3",
+    motion: "pop",
+    "duration-ms": "725",
+    confidence: "0.75",
+    "voice-cue": "laugh",
+    id: "42",
+  } as const;
+  for (const [field, value] of Object.entries(active)) {
+    assertStringIncludes(html, `data-reaction-${field}="${value}"`);
+  }
+
+  const defaults = {
+    kind: "",
+    expression: "",
+    intensity: "0",
+    motion: "",
+    "duration-ms": "0",
+    confidence: "1",
+    "voice-cue": "",
+    id: "0",
+  } as const;
+  for (const prefix of ["preceding", "micro"] as const) {
+    for (const [field, value] of Object.entries(defaults)) {
+      assertStringIncludes(html, `data-${prefix}-${field}="${value}"`);
+    }
+  }
+});
+
+Deno.test("SSR clamps finite confidence and maps non-finite confidence to one", () => {
+  for (
+    const [label, confidence, expected] of [
+      ["below zero", -0.5, 0],
+      ["above one", 1.5, 1],
+      ["NaN", Number.NaN, 1],
+      ["positive infinity", Number.POSITIVE_INFINITY, 1],
+      ["negative infinity", Number.NEGATIVE_INFINITY, 1],
+    ] as const
+  ) {
+    const html = renderFacialRig({
+      id: "confidence",
+      label: "Confidence",
+      reaction: {
+        expression: "focused",
+        intensity: 1,
+        motion: "sink",
+        durationMs: 100,
+        confidence,
+        voiceCue: "sigh",
+        id: 1,
+      },
+      precedingReaction: null,
+      microReaction: null,
+      personality: { amplitudeScale: 1, durationScale: 1, audioProbability: 0 },
+      rigKind: "human-photo",
+      src: "photo-source",
+      emotion: null,
+    });
+    assertStringIncludes(html, `data-reaction-confidence="${expected}"`, label);
+  }
+});
+
+Deno.test("SSR pins rig signatures for each avatar substrate", () => {
+  const common = {
+    id: "signature",
+    label: "Signature",
+    reaction: null,
+    precedingReaction: null,
+    microReaction: null,
+    personality: { amplitudeScale: 1, durationScale: 1, audioProbability: 0 },
+  } as const;
+  const cases = [
+    [
+      renderFacialRig({
+        ...common,
+        rigKind: "bot",
+        baseSvg: "<svg></svg>",
+        expressionSvg: "<svg></svg>",
+        microSvg: "<svg></svg>",
+      }),
+      "bot:1ucyux6",
+    ],
+    [
+      renderFacialRig({
+        ...common,
+        rigKind: "human-generated",
+        baseSrc: "base-source",
+        expressionSrc: "expression",
+        microSrc: "micro",
+        emotion: null,
+      }),
+      "human-generated:1q22ogw",
+    ],
+    [
+      renderFacialRig({
+        ...common,
+        rigKind: "human-photo",
+        src: "photo-source",
+        emotion: null,
+      }),
+      "human-photo:mjgbzt",
+    ],
+  ] as const;
+  for (const [html, signature] of cases) {
+    assertStringIncludes(html, `data-rig-signature="${signature}"`);
+  }
+  const botHtml = cases[0][0];
+  assertStringIncludes(botHtml, 'data-reaction-bot-emotion=""');
+  assertStringIncludes(botHtml, 'data-micro-bot-emotion=""');
+  assertEquals(botHtml.includes("--seat-amplitude-scale"), false);
+});
+
+Deno.test("SSR escapes rig IDs", () => {
   const common = {
     id: 'east" onpointerenter="globalThis.pwned=1',
     label: "East",
@@ -301,38 +563,57 @@ Deno.test("SSR escapes rig IDs and rejects active SVG markup", () => {
   });
   assert(!humanHtml.includes('onpointerenter="globalThis.pwned=1"'));
   assert(humanHtml.includes("east&quot; onpointerenter=&quot;globalThis.pwned=1"));
+});
 
-  const unsafeSvgs = [
-    '<svg xmlns="http://www.w3.org/2000/svg"><script>globalThis.pwned=1</script></svg>',
-    '<svg xmlns="http://www.w3.org/2000/svg" onload="globalThis.pwned=1"></svg>',
-    '<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:globalThis.pwned=1"/></svg>',
-  ];
+Deno.test("SSR rejects every unsafe SVG class with a warned blank layer", () => {
+  const safeSvg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+  const rejectionCases = [
+    ["absent root", "", "incomplete root"],
+    ["malformed root", "<g></g>", "root element"],
+    ["unbalanced root", "<svg><path></svg>", "unbalanced element svg"],
+    ["duplicate roots", "<svg></svg><svg></svg>", "root element"],
+    ["content outside root", "<svg></svg>trailing", "content after root"],
+    ["forbidden element", "<svg><script></script></svg>", "element script"],
+    ["forbidden attribute", '<svg onload="run()"></svg>', "attribute onload"],
+    ["unquoted attribute", "<svg width=1></svg>", "attributes on svg"],
+    [
+      "external CSS URL",
+      '<svg><path fill="url(https://example.test/fill)"/></svg>',
+      "URL for fill",
+    ],
+    ["JavaScript URL", '<svg><path fill="javascript:run()"/></svg>', "value for fill"],
+    ["HTML data URL", '<svg><path fill="data:text/html,run"/></svg>', "value for fill"],
+  ] as const;
   const warnings: string[] = [];
   const realWarn = console.warn;
   console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
   try {
-    for (const unsafeSvg of unsafeSvgs) {
+    for (const [label, unsafeSvg] of rejectionCases) {
       const html = renderFacialRig({
-        ...common,
+        id: "unsafe",
+        label: "Unsafe",
+        reaction: null,
+        precedingReaction: null,
+        microReaction: null,
+        personality: { amplitudeScale: 1, durationScale: 1, audioProbability: 0 },
         rigKind: "bot",
         baseSvg: unsafeSvg,
-        expressionSvg: bot.emotions.happy,
-        microSvg: bot.emotions.focused,
+        expressionSvg: safeSvg,
+        microSvg: safeSvg,
       });
-      // Rejected markup degrades to one blank layer, so a single bad avatar
-      // never takes down a caller's whole render.
-      assert(!html.includes("<script"));
-      assert(!html.includes("onload"));
-      assert(!html.includes("javascript:"));
-      assert(html.includes('viewBox="0 0 1 1"'));
-      assert(html.includes('class="avatar avatar-rigged avatar-base"'));
-      assert(!html.includes('onpointerenter="globalThis.pwned=1"'));
+      assertEquals(html.match(/viewBox="0 0 1 1"/g)?.length, 1, label);
+      assertStringIncludes(html, 'class="avatar avatar-rigged avatar-base"', label);
+      if (unsafeSvg !== "") assertEquals(html.includes(unsafeSvg), false, label);
     }
   } finally {
     console.warn = realWarn;
   }
-  assertEquals(warnings.length, unsafeSvgs.length);
-  for (const warning of warnings) assertStringIncludes(warning, "unsafe inline SVG rejected");
+  assertEquals(
+    warnings,
+    rejectionCases.map(([, , reason]) =>
+      `avatar: unsafe inline SVG rejected (${reason}); rendering a blank layer`
+    ),
+  );
 });
 
 Deno.test("SSR keeps replacement patterns in caller text literal", () => {

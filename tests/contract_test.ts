@@ -77,6 +77,32 @@ Deno.test("package sources have no Preferans imports", async () => {
   }
 });
 
+Deno.test("public root import graph stays inside the package and excludes Preferans", async () => {
+  const publicRoot = new URL("../mod.ts", import.meta.url);
+  const output = await new Deno.Command("deno", {
+    args: ["info", "--json", publicRoot.pathname],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assert(output.success, new TextDecoder().decode(output.stderr));
+
+  const info = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+    roots: string[];
+    modules: Array<{ specifier: string }>;
+  };
+  assertEquals(info.roots, [publicRoot.href]);
+  const specifiers = info.modules.map((module) => module.specifier);
+  assert(specifiers.includes(publicRoot.href));
+  const packageRoot = new URL("../", import.meta.url).href;
+  for (const specifier of specifiers.filter((specifier) => specifier.startsWith("file:"))) {
+    assert(specifier.startsWith(packageRoot), `outside package root: ${specifier}`);
+  }
+  assertEquals(
+    specifiers.some((specifier) => specifier.toLowerCase().includes("preferans")),
+    false,
+  );
+});
+
 Deno.test("browser assets retain iOS guards and drop the consumer seat branch", async () => {
   const js = await Deno.readTextFile(AVATAR_ASSETS.facialRigScript.url);
   const css = await Deno.readTextFile(AVATAR_ASSETS.facialRigStyles.url);
