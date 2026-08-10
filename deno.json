@@ -1,0 +1,41 @@
+{
+  "name": "@srdjan/avatar",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mod.ts",
+    "./server": "./server/mod.ts",
+    "./assets": "./assets/mod.ts"
+  },
+  "//imports": "Deno has no devDependencies: everything here becomes a declared dependency of every consumer. Test-only packages use full specifiers inside tests/ instead.",
+  "imports": {
+    "@dicebear/core": "npm:@dicebear/core@9.4.3",
+    "@dicebear/avataaars-neutral": "npm:@dicebear/avataaars-neutral@9.4.2",
+    "@dicebear/lorelei-neutral": "npm:@dicebear/lorelei-neutral@9.4.2"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.ns", "deno.window", "dom"],
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": { "tags": ["recommended"] },
+    "exclude": ["assets/private/"]
+  },
+  "tasks": {
+    "fmt": "deno fmt --check",
+    "lint": "deno lint && deno lint --no-config --rules-exclude=no-window,no-window-prefix,no-var,no-inner-declarations,no-unused-vars assets/private/facial-rig.js",
+    "type": "deno check mod.ts server/mod.ts assets/mod.ts tests/unit_test.ts tests/contract_test.ts tests/browser_test.ts",
+    "unit": "deno test --allow-read tests/unit_test.ts tests/contract_test.ts",
+    "playwright:install": "deno run -A npm:playwright@1.60.0 install chromium",
+    "browser": "deno task playwright:install && deno test -A tests/browser_test.ts",
+    "consumer": "deno task --config fixtures/external-consumer/deno.json check",
+    "check": "deno task fmt && deno task lint && deno task type && deno task unit && deno task browser && deno task consumer"
+  }
+}

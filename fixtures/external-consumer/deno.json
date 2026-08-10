@@ -1,0 +1,11 @@
+{
+  "links": ["../.."],
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "tasks": {
+    "check": "deno check consumer.ts && deno test --allow-read consumer_test.ts"
+  }
+}
