@@ -39,8 +39,10 @@ outside that vocabulary are never inlined. Rejected markup degrades to one blank
 
 `browser/runtime_core.ts` owns pure reaction and audio decisions. `browser/facial_rig.ts` interprets
 those decisions through explicit browser capabilities. `deno task browser:build` generates the
-single classic script at `assets/private/facial-rig.js`; do not edit that output directly. Consumers
-access it only through `AVATAR_ASSETS.facialRigScript`, and it installs one global:
+single classic script at `assets/private/facial-rig.js`; do not edit that output directly. Those are
+esbuild bytes used verbatim, so the file is not formatted to the repository style and `deno fmt`
+skips it: the script carries a SHA-256 compatibility lock, and every input to it stays pinned.
+Consumers access it only through `AVATAR_ASSETS.facialRigScript`, and it installs one global:
 `window.FacialRig`. `AVATAR_ASSETS.facialRigStyles` is its stylesheet and must load before any app
 CSS that overrides `.avatar-rig` or `.face-*` rules.
 

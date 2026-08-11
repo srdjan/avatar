@@ -4,7 +4,7 @@
   function initialRigState() {
     return {
       seen: { main: 0, preceding: 0, micro: 0 },
-      speech: { tag: "silent" },
+      speech: { tag: "silent" }
     };
   }
   function seedRigState(protocol) {
@@ -13,8 +13,8 @@
       seen: {
         main: protocol.main.id,
         preceding: protocol.preceding.id,
-        micro: protocol.micro.id,
-      },
+        micro: protocol.micro.id
+      }
     };
   }
   function reduceRigSync(state, protocol) {
@@ -22,20 +22,18 @@
     const precedingChanged = protocol.preceding.id > state.seen.preceding;
     const microChanged = protocol.micro.id > state.seen.micro;
     const main = mainChanged && protocol.main.tag === "active" ? protocol.main : null;
-    const preceding = precedingChanged && protocol.preceding.tag === "active"
-      ? protocol.preceding
-      : null;
+    const preceding = precedingChanged && protocol.preceding.tag === "active" ? protocol.preceding : null;
     const micro = microChanged && protocol.micro.tag === "active" ? protocol.micro : null;
     return {
       state: {
         seen: {
           main: mainChanged ? protocol.main.id : state.seen.main,
           preceding: precedingChanged ? protocol.preceding.id : state.seen.preceding,
-          micro: microChanged ? protocol.micro.id : state.seen.micro,
+          micro: microChanged ? protocol.micro.id : state.seen.micro
         },
-        speech: state.speech,
+        speech: state.speech
       },
-      effects: rigEffects(main, preceding, micro),
+      effects: rigEffects(main, preceding, micro)
     };
   }
   function rigEffects(main, preceding, micro) {
@@ -58,11 +56,11 @@
     groan: 1800,
     laugh: 945,
     laughClimactic: 1800,
-    sigh: 1800,
+    sigh: 1800
   };
   var AUDIO_PROBABILITY_BY_KIND = {
     bot: [0.4, 0.7, 0.95],
-    "human-generated": [0.08, 0.2, 0.4],
+    "human-generated": [0.08, 0.2, 0.4]
   };
   function initialAudioPolicy() {
     return { activeSeats: {}, cueCooldownUntil: {}, seatPlayedAt: {} };
@@ -88,13 +86,13 @@
     }
     const recentSeatPlayedAt = Object.fromEntries(
       Object.entries(state.seatPlayedAt).filter(
-        ([, playedAt]) => context.now - playedAt < AUDIO_SEAT_COOLDOWN_MS,
-      ),
+        ([, playedAt]) => context.now - playedAt < AUDIO_SEAT_COOLDOWN_MS
+      )
     );
     const recentCueCooldownUntil = Object.fromEntries(
       Object.entries(state.cueCooldownUntil).filter(
-        ([, cooldownUntil]) => context.now < cooldownUntil,
-      ),
+        ([, cooldownUntil]) => context.now < cooldownUntil
+      )
     );
     return {
       tag: "admitted",
@@ -105,12 +103,10 @@
         ...state,
         cueCooldownUntil: {
           ...recentCueCooldownUntil,
-          [request.cue]: context.now + AUDIO_CUE_COOLDOWN_MS[intensityIndex],
+          [request.cue]: context.now + AUDIO_CUE_COOLDOWN_MS[intensityIndex]
         },
-        seatPlayedAt: request.seatId === ""
-          ? recentSeatPlayedAt
-          : { ...recentSeatPlayedAt, [request.seatId]: context.now },
-      },
+        seatPlayedAt: request.seatId === "" ? recentSeatPlayedAt : { ...recentSeatPlayedAt, [request.seatId]: context.now }
+      }
     };
   }
   function audioCandidate(request, context) {
@@ -120,9 +116,7 @@
       return { tag: "rejected", reason: "rig-kind" };
     }
     const climactic = request.cue === "laugh" && request.intensity >= 3;
-    const cueKey = climactic && context.availableCues.has("laughClimactic")
-      ? "laughClimactic"
-      : request.cue;
+    const cueKey = climactic && context.availableCues.has("laughClimactic") ? "laughClimactic" : request.cue;
     if (!context.availableCues.has(cueKey)) {
       return { tag: "rejected", reason: "missing-asset" };
     }
@@ -156,7 +150,7 @@
     "speaking-laugh",
     "speaking-sigh",
     "speaking-groan",
-    "speaking-challenge",
+    "speaking-challenge"
   ];
   var AUDIO_TIMEOUT_MS2 = [2e3, 2400, 3200];
   var IDLE_PROPERTIES = [
@@ -175,39 +169,39 @@
     "--rig-breath-rot",
     "--rig-breath-scale",
     "--rig-light-x",
-    "--rig-light-y",
+    "--rig-light-y"
   ];
   var MACRO_POSES = {
     happiness: {
       ".face-eyes": "scaleY(0.72)",
       ".face-mouth": "translateY(-1px) scale(1.15)",
-      ".face-brows": "translateY(-8px)",
+      ".face-brows": "translateY(-8px)"
     },
     sadness: {
       ".face-eyes": "scaleY(0.76)",
       ".face-mouth": "translateY(2px) scaleX(0.92)",
-      ".face-brows": "translateY(5px)",
+      ".face-brows": "translateY(5px)"
     },
     anger: {
       ".face-eyes": "translateX(-1px) scaleY(0.7)",
       ".face-mouth": "scaleX(0.9)",
-      ".face-brows": "translateY(6px)",
+      ".face-brows": "translateY(6px)"
     },
     fear: {
       ".face-eyes": "scaleY(1.5)",
       ".face-mouth": "scaleY(1.8)",
-      ".face-brows": "translateY(-10px)",
+      ".face-brows": "translateY(-10px)"
     },
     surprise: {
       ".face-eyes": "scaleY(1.7)",
       ".face-mouth": "translateY(1px) scaleY(2)",
-      ".face-brows": "translateY(-12px)",
+      ".face-brows": "translateY(-12px)"
     },
     focused: {
       ".face-eyes": "translateX(2px) scaleY(0.8)",
       ".face-mouth": "scaleX(0.95)",
-      ".face-brows": "translateY(-4px)",
-    },
+      ".face-brows": "translateY(-4px)"
+    }
   };
   var MICRO_POSES = {
     happiness: { ".face-mouth": "scale(1.1)", ".face-brows": "translateY(-5px)" },
@@ -216,7 +210,7 @@
     sadness: { ".face-mouth": "translateY(1px) scaleX(0.96)" },
     anger: { ".face-brows": "translateY(4px)" },
     fear: { ".face-eyes": "scaleY(1.25)" },
-    surprise: { ".face-eyes": "scaleY(1.35)", ".face-mouth": "scaleY(1.35)" },
+    surprise: { ".face-eyes": "scaleY(1.35)", ".face-mouth": "scaleY(1.35)" }
   };
   function createFacialRigRuntime(capabilities) {
     const rigStatesById = /* @__PURE__ */ new Map();
@@ -230,18 +224,16 @@
     let config = {
       audioAssets: {},
       silenceSrc: "",
-      isAudioEnabled: () => true,
+      isAudioEnabled: () => true
     };
     function isIOSCompositorGuard() {
-      return /iPad|iPhone|iPod/.test(capabilities.navigator.userAgent) ||
-        capabilities.navigator.platform === "MacIntel" && capabilities.navigator.maxTouchPoints > 1;
+      return /iPad|iPhone|iPod/.test(capabilities.navigator.userAgent) || capabilities.navigator.platform === "MacIntel" && capabilities.navigator.maxTouchPoints > 1;
     }
     function isReducedMotion() {
       return capabilities.matchMedia("(prefers-reduced-motion: reduce)").matches;
     }
     function canAnimate() {
-      return !isIOSCompositorGuard() && !isReducedMotion() &&
-        capabilities.document.visibilityState !== "hidden";
+      return !isIOSCompositorGuard() && !isReducedMotion() && capabilities.document.visibilityState !== "hidden";
     }
     function timersFor(rig) {
       const current = rigTimers.get(rig);
@@ -273,16 +265,16 @@
           readFiniteNumber(rig.dataset[`${prefix}Confidence`], 1),
           0,
           1,
-          1,
+          1
         ),
-        voiceCue: rig.dataset[`${prefix}VoiceCue`] ?? "",
+        voiceCue: rig.dataset[`${prefix}VoiceCue`] ?? ""
       };
     }
     function readProtocol(rig) {
       return {
         main: readReaction(rig, "reaction"),
         preceding: readReaction(rig, "preceding"),
-        micro: readReaction(rig, "micro"),
+        micro: readReaction(rig, "micro")
       };
     }
     function rigKind(rig) {
@@ -304,7 +296,7 @@
           rig,
           ".avatar-expression",
           MACRO_POSES[reaction.expression] ?? {},
-          reactionAmplitude(rig, reaction.confidence),
+          reactionAmplitude(rig, reaction.confidence)
         );
       }
       if (reaction.voiceCue !== "") {
@@ -314,8 +306,7 @@
           rigKind: rigKind(rig),
           rigId: rig.id,
           seatId: rig.id.replace(/^avatar-rig-/, ""),
-          seatAudioProbability: readFiniteNumber(rig.dataset.seatAudioProbability, 1) *
-            reaction.confidence,
+          seatAudioProbability: readFiniteNumber(rig.dataset.seatAudioProbability, 1) * reaction.confidence
         });
       }
       timers.macroEnd = capabilities.setTimer(() => {
@@ -334,7 +325,7 @@
           rig,
           ".avatar-micro-expression",
           MICRO_POSES[reaction.expression] ?? {},
-          reactionAmplitude(rig, reaction.confidence),
+          reactionAmplitude(rig, reaction.confidence)
         );
       }
       timers.microEnd = capabilities.setTimer(() => {
@@ -353,7 +344,7 @@
           clearTimer(timers, "macroStart");
           timers.macroStart = capabilities.setTimer(
             () => startMacro(rig, effect.reaction),
-            effect.delayMs,
+            effect.delayMs
           );
           return;
         }
@@ -395,17 +386,15 @@
         }
         const state = rigStatesById.get(live.id);
         const protocol = readProtocol(incoming);
-        const preserveMacro = state !== void 0 && live.classList.contains("is-reacting") &&
-          protocol.main.id === state.seen.main && protocol.preceding.id === state.seen.preceding;
-        const preserveMicro = state !== void 0 && live.classList.contains("is-micro-reacting") &&
-          protocol.micro.id === state.seen.micro;
+        const preserveMacro = state !== void 0 && live.classList.contains("is-reacting") && protocol.main.id === state.seen.main && protocol.preceding.id === state.seen.preceding;
+        const preserveMicro = state !== void 0 && live.classList.contains("is-micro-reacting") && protocol.micro.id === state.seen.micro;
         copyRigProtocol(live, incoming);
         replaceLayer(live, incoming, ".avatar-expression", preserveMacro);
         replaceLayer(
           live,
           incoming,
           ".avatar-micro-expression",
-          preserveMicro,
+          preserveMicro
         );
       }
     }
@@ -423,7 +412,7 @@
       if (speakingClass !== null) rig.classList.add(speakingClass);
       rigStatesById.set(rigId, {
         ...rigStatesById.get(rigId) ?? initialRigState(),
-        speech: { tag: "speaking" },
+        speech: { tag: "speaking" }
       });
       timers.speechEnd = capabilities.setTimer(() => stopSpeaking(rigId), durationMs);
       if (!canAnimate()) return;
@@ -450,7 +439,7 @@
       clearSpeakingClasses(rig);
       rigStatesById.set(rigId, {
         ...rigStatesById.get(rigId) ?? initialRigState(),
-        speech: { tag: "fading" },
+        speech: { tag: "fading" }
       });
       timers.speechClear = capabilities.setTimer(() => {
         for (const mouth of speakingMouths(rig)) mouth.style.removeProperty("transform");
@@ -465,7 +454,7 @@
         audioEnabled: audioEnabled(config.isAudioEnabled),
         availableCues: new Set(Object.keys(config.audioAssets)),
         now: capabilities.now(),
-        randomSample: capabilities.random(),
+        randomSample: capabilities.random()
       });
       if (decision.tag === "rejected") return;
       audioPolicy = decision.nextState;
@@ -480,13 +469,13 @@
         rigKind: request.rigKind,
         rigId: request.rigId,
         seatId: request.seatId,
-        seatAudioProbability: request.seatAudioProbability,
+        seatAudioProbability: request.seatAudioProbability
       };
       if (rig !== null) {
         const event = new CustomEvent("facial-rig:voice-cue", {
           bubbles: true,
           cancelable: true,
-          detail,
+          detail
         });
         if (!rig.dispatchEvent(event)) return;
       }
@@ -554,9 +543,7 @@
           const rig = capabilities.document.getElementById(rigId);
           if (rig instanceof HTMLElement && canAnimate()) {
             for (const mouth of speakingMouths(rig)) {
-              mouth.style.transform = `translateY(${(level * 1.5).toFixed(2)}px) scaleY(${
-                (1 + level * 2).toFixed(3)
-              })`;
+              mouth.style.transform = `translateY(${(level * 1.5).toFixed(2)}px) scaleY(${(1 + level * 2).toFixed(3)})`;
             }
           }
           frameId = capabilities.requestFrame(sample);
@@ -654,19 +641,15 @@
   }
   function parseConfig(input, current) {
     const rawAssets = input.audioAssets;
-    const audioAssets = rawAssets !== null && typeof rawAssets === "object"
-      ? Object.fromEntries(
-        Object.entries(rawAssets).filter(
-          (entry) => typeof entry[1] === "string",
-        ),
+    const audioAssets = rawAssets !== null && typeof rawAssets === "object" ? Object.fromEntries(
+      Object.entries(rawAssets).filter(
+        (entry) => typeof entry[1] === "string"
       )
-      : current.audioAssets;
+    ) : current.audioAssets;
     return {
       audioAssets,
       silenceSrc: typeof input.silenceSrc === "string" ? input.silenceSrc : current.silenceSrc,
-      isAudioEnabled: typeof input.isAudioEnabled === "function"
-        ? input.isAudioEnabled
-        : current.isAudioEnabled,
+      isAudioEnabled: typeof input.isAudioEnabled === "function" ? input.isAudioEnabled : current.isAudioEnabled
     };
   }
   function parseAudioRequest(input) {
@@ -676,13 +659,11 @@
       rigKind: parseRigKind(input.rigKind),
       rigId: typeof input.rigId === "string" ? input.rigId : "",
       seatId: typeof input.seatId === "string" ? input.seatId : "",
-      seatAudioProbability: readUnknownNumber(input.seatAudioProbability, 1),
+      seatAudioProbability: readUnknownNumber(input.seatAudioProbability, 1)
     };
   }
   function parseRigKind(value) {
-    return value === "bot" || value === "human-generated" || value === "human-photo"
-      ? value
-      : "unknown";
+    return value === "bot" || value === "human-generated" || value === "human-photo" ? value : "unknown";
   }
   function isAnimatedRig(rig) {
     return rig.isConnected && parseRigKind(rig.dataset.rigKind) !== "human-photo";
@@ -697,13 +678,10 @@
       "data-seat-",
       "data-reaction-",
       "data-preceding-",
-      "data-micro-",
+      "data-micro-"
     ];
     for (const attribute of [...live.attributes]) {
-      if (
-        protocolPrefixes.some((prefix) => attribute.name.startsWith(prefix)) &&
-        !incoming.hasAttribute(attribute.name)
-      ) {
+      if (protocolPrefixes.some((prefix) => attribute.name.startsWith(prefix)) && !incoming.hasAttribute(attribute.name)) {
         live.removeAttribute(attribute.name);
       }
     }
@@ -735,7 +713,7 @@
   }
   function reactionAmplitude(rig, confidence) {
     const rawAmplitude = Number.parseFloat(
-      rig.style.getPropertyValue("--seat-amplitude-scale") || "1",
+      rig.style.getPropertyValue("--seat-amplitude-scale") || "1"
     );
     const amplitude = Number.isFinite(rawAmplitude) ? rawAmplitude : 1;
     return amplitude * confidence;
@@ -743,15 +721,14 @@
   function scaleTransformFromNeutral(transform, amplitude) {
     const translated = transform.replace(
       /translate([XY])\((-?(?:\d+(?:\.\d+)?|\.\d+))px\)/g,
-      (_match, axis, value) =>
-        `translate${axis}(${formatTransformNumber(Number(value) * amplitude)}px)`,
+      (_match, axis, value) => `translate${axis}(${formatTransformNumber(Number(value) * amplitude)}px)`
     );
     return translated.replace(
       /scale([XY]?)\((-?(?:\d+(?:\.\d+)?|\.\d+))\)/g,
       (_match, axis, value) => {
         const scaled = 1 + (Number(value) - 1) * amplitude;
         return `scale${axis}(${formatTransformNumber(scaled)})`;
-      },
+      }
     );
   }
   function formatTransformNumber(value) {
@@ -759,11 +736,9 @@
     return String(Object.is(rounded, -0) ? 0 : rounded);
   }
   function clearPose(rig, layerSelector) {
-    for (
-      const feature of rig.querySelectorAll(
-        `${layerSelector} .face-eyes, ${layerSelector} .face-mouth, ${layerSelector} .face-brows`,
-      )
-    ) {
+    for (const feature of rig.querySelectorAll(
+      `${layerSelector} .face-eyes, ${layerSelector} .face-mouth, ${layerSelector} .face-brows`
+    )) {
       feature.style.removeProperty("transform");
     }
   }
@@ -784,7 +759,7 @@
   }
   function speakingMouths(rig) {
     return [...rig.querySelectorAll(
-      ".avatar-base .face-mouth, .avatar-expression .face-mouth",
+      ".avatar-base .face-mouth, .avatar-expression .face-mouth"
     )];
   }
   function speakingClassFor(cue) {
@@ -797,9 +772,7 @@
   function mouthEnvelope(cue, elapsed) {
     const amplitude = cue === "laugh" || cue === "challenge" ? 0.28 : cue === "gasp" ? 0.36 : 0.18;
     const wave = Math.abs(Math.sin(elapsed / 42));
-    return `translateY(${(wave * amplitude * 2).toFixed(2)}px) scaleY(${
-      (1 + wave * amplitude).toFixed(3)
-    })`;
+    return `translateY(${(wave * amplitude * 2).toFixed(2)}px) scaleY(${(1 + wave * amplitude).toFixed(3)})`;
   }
   function rmsLevel(samples) {
     if (samples.length === 0) return 0;
@@ -818,9 +791,7 @@
     }
   }
   function audioTimeoutMs(intensity) {
-    const index = Number.isInteger(intensity) && intensity >= 1 && intensity <= 3
-      ? intensity - 1
-      : 0;
+    const index = Number.isInteger(intensity) && intensity >= 1 && intensity <= 3 ? intensity - 1 : 0;
     return AUDIO_TIMEOUT_MS2[index] ?? AUDIO_TIMEOUT_MS2[0];
   }
   function readFiniteNumber(value, fallback) {
@@ -828,11 +799,7 @@
     return readUnknownNumber(value, fallback);
   }
   function readUnknownNumber(value, fallback) {
-    const parsed = typeof value === "number"
-      ? value
-      : typeof value === "string"
-      ? Number(value)
-      : NaN;
+    const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
     return Number.isFinite(parsed) ? parsed : fallback;
   }
   function defaultCapabilities(target) {
@@ -848,8 +815,7 @@
       setTimer: (callback, delayMs) => target.setTimeout(callback, delayMs),
       clearTimer: (timerId) => target.clearTimeout(timerId),
       createAudio: (src) => new target.Audio(src),
-      createAudioContext: () =>
-        AudioContextConstructor === void 0 ? null : new AudioContextConstructor(),
+      createAudioContext: () => AudioContextConstructor === void 0 ? null : new AudioContextConstructor()
     };
   }
   function install(target) {

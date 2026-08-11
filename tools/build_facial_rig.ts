@@ -23,7 +23,13 @@ try {
   });
   const output = result.outputFiles?.[0];
   if (output === undefined) throw new Error("browser build produced no output");
-  const generated = await formatJavaScript(new TextDecoder().decode(output.contents));
+  // esbuild output is used verbatim. The checked script carries a SHA-256
+  // compatibility lock, so every input to these bytes must be pinned. Piping
+  // through `deno fmt` would add the installed Deno version as a second,
+  // unpinned input: a formatter change would then fail `browser:check` - the
+  // first step of the whole gate - and the obvious repair would rewrite the
+  // hash. A toolchain upgrade must not be able to spend that lock.
+  const generated = new TextDecoder().decode(output.contents);
   if (checkOnly) {
     const current = await Deno.readTextFile(outputPath);
     if (current !== generated) {
@@ -34,19 +40,4 @@ try {
   }
 } finally {
   stop();
-}
-
-async function formatJavaScript(source: string): Promise<string> {
-  const process = new Deno.Command(Deno.execPath(), {
-    args: ["fmt", "--ext=js", "-"],
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const writer = process.stdin.getWriter();
-  await writer.write(new TextEncoder().encode(source));
-  await writer.close();
-  const output = await process.output();
-  if (!output.success) throw new Error(new TextDecoder().decode(output.stderr));
-  return new TextDecoder().decode(output.stdout);
 }

@@ -2,7 +2,7 @@ import { assert, assertEquals } from "jsr:@std/assert@1.0.14";
 import { AVATAR_ASSETS, AVATAR_AUDIO_ASSETS, DEFAULT_VOICE_PACK } from "@srdjan/avatar/assets";
 
 const EXPECTED_HASHES: Readonly<Record<keyof typeof AVATAR_ASSETS, string>> = {
-  facialRigScript: "c903d5902a29c09d8388274f0d5219973db0ee0200a7037744198c6a8fb83294",
+  facialRigScript: "6f6a319b682ebb16c7eaf83d612a68e8ea6096506b5a795f87e7d6065f410b0c",
   facialRigStyles: "2f4a5539f2a75e7d75077510c4972646084fe4afe1e0703406ac06b2f319a125",
   haha: "838c4863398dba33f794faf5a640d592fa577e420a57114ef7d113d146532ca2",
   hahaha: "20351581b4b41bb7ed9eae615793598d9140c7202a5557f548d7d903aedb72cc",
@@ -52,6 +52,21 @@ Deno.test("asset manifest is complete, typed, readable, and byte-pinned", async 
     AVATAR_AUDIO_ASSETS.map((asset) => asset.id),
     ["haha", "hahaha", "nenene", "opa", "ufNanumu", "silence"],
   );
+});
+
+// The checked script is generated, and its bytes carry the SHA-256 above. That
+// lock is only meaningful while every build input is pinned, so prove the
+// builder reproduces the checked bytes rather than trusting the gate ordering.
+Deno.test("the checked browser script rebuilds from pinned inputs", async () => {
+  const builder = new URL("../tools/build_facial_rig.ts", import.meta.url);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const output = await new Deno.Command("deno", {
+      args: ["run", "-A", builder.pathname, "--check"],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assert(output.success, new TextDecoder().decode(output.stderr));
+  }
 });
 
 Deno.test("public package boundary has exactly three entry points", async () => {

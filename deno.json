@@ -19,10 +19,12 @@
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true
   },
+  "//fmt": "The generated classic script is excluded: its bytes are the esbuild output verbatim, so formatting it here would assert a second, unpinned contract over a SHA-256-locked file.",
   "fmt": {
     "lineWidth": 100,
     "semiColons": true,
-    "singleQuote": false
+    "singleQuote": false,
+    "exclude": ["assets/private/facial-rig.js"]
   },
   "lint": {
     "rules": { "tags": ["recommended"] },

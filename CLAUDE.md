@@ -69,6 +69,15 @@ SHA-256 for every file in `AVATAR_ASSETS`, including the script and the styleshe
 the fingerprint and the dependency version together, and treat a hash change as a compatibility
 change.
 
+**Every input to the generated browser script is pinned.** `assets/private/facial-rig.js` is esbuild
+output used verbatim, and its only pinned input is `npm:esbuild@0.25.9` in
+`tools/build_facial_rig.ts`. Do not add an unpinned step to that pipeline. `deno fmt` was one, and
+it was removed: the formatter follows the installed Deno, so a Deno upgrade would fail
+`deno task browser:check` - the first step of the whole gate - and the obvious repair would rewrite
+the SHA-256 lock. `deno fmt` therefore excludes the generated file, and a contract test rebuilds it
+to prove reproducibility. An esbuild bump is a compatibility change: move the version and the hash
+together, with behavior evidence for the new bytes.
+
 **Deno has no devDependencies.** Anything in the `imports` map of `deno.json` becomes a dependency
 of every consumer. Test-only packages use full specifiers (`jsr:@std/assert@1.0.14`,
 `npm:playwright@1.60.0`) inside `tests/`.
