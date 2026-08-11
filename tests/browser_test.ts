@@ -1768,6 +1768,52 @@ Deno.test("computed style oracle pins motion, crossfade, and reduced-motion beha
   }
 });
 
+// The tear-line has no runtime writer: nothing in facial-rig.js touches it.
+// Its whole reveal lives in the stylesheet, so pin both the paint and the
+// gate here - a tear-line that computes to zero opacity everywhere is a
+// silently dead feature the SSR and script contracts cannot detect.
+Deno.test("tear-line paints only while a sad reaction is active", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.setContent(`
+      <span id="rig" class="avatar-rig" data-rig-kind="bot"
+        data-reaction-expression="" data-reaction-bot-emotion="">
+        <svg class="avatar avatar-base">
+          <g class="face-tearline-plane">
+            <path class="face-tearline" d="M32 52 Q37 54 42 52 Q37 55 32 52 Z" />
+          </g>
+        </svg>
+      </span>
+    `);
+    await page.addStyleTag({ path: localPath(AVATAR_ASSETS.facialRigStyles.url) });
+    // Sample the reveal gate, not the 280ms fade that carries it, so the
+    // assertions never race the transition.
+    await page.addStyleTag({ content: ".face-tearline-plane { transition: none !important; }" });
+    const read = (expression: string, botEmotion: string, reacting: boolean) =>
+      page.locator("#rig").evaluate(
+        (rig, state: { expression: string; botEmotion: string; reacting: boolean }) => {
+          rig.setAttribute("data-reaction-expression", state.expression);
+          rig.setAttribute("data-reaction-bot-emotion", state.botEmotion);
+          rig.classList.toggle("is-reacting", state.reacting);
+          return {
+            planeOpacity: getComputedStyle(rig.querySelector(".face-tearline-plane")!).opacity,
+            fillOpacity: getComputedStyle(rig.querySelector(".face-tearline")!).fillOpacity,
+          };
+        },
+        { expression, botEmotion, reacting },
+      );
+
+    // The paint must be non-zero on its own, or the reveal gate reveals nothing.
+    assertEquals(await read("sadness", "", true), { planeOpacity: "1", fillOpacity: "0.06" });
+    assertEquals(await read("", "sad", true), { planeOpacity: "1", fillOpacity: "0.06" });
+    assertEquals(await read("happiness", "", true), { planeOpacity: "0", fillOpacity: "0.06" });
+    assertEquals(await read("sadness", "", false), { planeOpacity: "0", fillOpacity: "0.06" });
+  } finally {
+    await browser.close();
+  }
+});
+
 if (COVERAGE_ENABLED) {
   Deno.test("browser runtime meets precise coverage budgets", () => {
     const report = runtimeCoverageReport(

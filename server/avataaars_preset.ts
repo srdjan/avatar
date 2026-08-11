@@ -71,7 +71,7 @@ export const avataaarsPreset: DecomposeOptions = {
       markup: '<ellipse class="face-eyelid face-eyelid-left" cx="37" cy="44" rx="3.5" ry="1.2" />' +
         '<ellipse class="face-eyelid face-eyelid-right" cx="75" cy="44" rx="3.5" ry="1.2" />',
     },
-    // Tear-line opacity follows the sadness amount written by the runtime.
+    // The tear-line becomes visible only for sad reaction poses.
     {
       className: "face-tearline-plane",
       markup:

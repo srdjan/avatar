@@ -511,14 +511,22 @@
   transform-origin: 50% 0%;
 }
 
-/* Tear-line: paired faint shadows below each eye that fade in with
-   --face-sad-amount (0..1, written by moodBias when sadness is active). */
+/* Tear-line: paired faint shadows below each eye, revealed only while a
+   sad reaction is active. The reveal rides the `data-reaction-*` attribute
+   contract like the mouth cavity below, because the runtime writes no CSS
+   variable for static overlays - it only drives per-feature transforms. */
 .face-tearline-plane {
   --plane-depth: var(--depth-tearline);
+  opacity: 0;
+  transition: opacity 280ms ease;
+}
+.avatar-rig.is-reacting[data-reaction-expression="sadness"] .face-tearline-plane,
+.avatar-rig.is-reacting[data-reaction-bot-emotion="sad"] .face-tearline-plane {
+  opacity: 1;
 }
 .face-tearline {
   fill: #000;
-  fill-opacity: calc(var(--face-sad-amount, 0) * var(--face-tearline-alpha-peak));
+  fill-opacity: var(--face-tearline-alpha-peak);
 }
 
 /* Ambient occlusion: static feature-crevice darkening. Rides the
