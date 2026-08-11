@@ -37,8 +37,10 @@ outside that vocabulary are never inlined. Rejected markup degrades to one blank
 
 ## Browser contract
 
-`assets/private/facial-rig.js` is a hand-authored classic script, not a module. It is exposed to
-consumers only through `AVATAR_ASSETS.facialRigScript`, and it installs one global:
+`browser/runtime_core.ts` owns pure reaction and audio decisions. `browser/facial_rig.ts` interprets
+those decisions through explicit browser capabilities. `deno task browser:build` generates the
+single classic script at `assets/private/facial-rig.js`; do not edit that output directly. Consumers
+access it only through `AVATAR_ASSETS.facialRigScript`, and it installs one global:
 `window.FacialRig`. `AVATAR_ASSETS.facialRigStyles` is its stylesheet and must load before any app
 CSS that overrides `.avatar-rig` or `.face-*` rules.
 
@@ -108,8 +110,12 @@ would override the SVG attribute and collapse the feature to the origin), and an
 ## Checks
 
 ```sh
+deno task browser:build
+deno task browser:coverage
 deno task check
 ```
 
-The aggregate check runs formatting, linting, type checks, unit tests, browser tests (installing
-Chromium first), and the isolated external-consumer fixture.
+The build command regenerates the checked classic script. The coverage command runs the Chromium
+suite with executable-line, V8-block, and function budgets. The aggregate check first verifies that
+the generated script is fresh and within its branch and complexity budgets, then runs formatting,
+linting, type checks, unit tests, browser tests, and the isolated external-consumer fixture.

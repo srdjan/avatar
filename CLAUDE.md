@@ -17,6 +17,8 @@ contract: it records the invariants the tests enforce.
 deno task check      # fmt + lint + type + unit + browser + consumer fixture
 deno task unit       # unit and contract tests only (fast, no browser)
 deno task browser    # installs Chromium, then runs Playwright tests
+deno task browser:build    # generate the classic script from typed browser source
+deno task browser:coverage # run Chromium with runtime coverage budgets
 deno task consumer   # type-checks the isolated external-consumer fixture
 ```
 
@@ -27,8 +29,9 @@ deno test --allow-read tests/unit_test.ts --filter "SSR escapes rig IDs"
 deno test -A tests/browser_test.ts --filter "iPhone idle mode"
 ```
 
-`deno task lint` runs twice: once with the project config, once with a relaxed rule set for
-`assets/private/facial-rig.js`, which is a hand-authored classic script and not a module.
+`deno task lint` runs twice: once with the project config, once with a relaxed rule set for the
+generated classic script at `assets/private/facial-rig.js`. Edit `browser/runtime_core.ts` or
+`browser/facial_rig.ts`, then regenerate the asset with `deno task browser:build`.
 
 A version bump must change four places together: `deno.json`, the `config.version` assertion in
 `tests/contract_test.ts`, the version line in `README.md`, and the linked package version recorded
@@ -41,6 +44,7 @@ Three public entry points, and no others. A contract test asserts the exports ma
 - `mod.ts` - the generator and the shared type vocabulary.
 - `server/mod.ts` - SSR rendering, SVG decomposition, the DiceBear selector preset.
 - `assets/mod.ts` - typed descriptors (`id`, `fileName`, `mimeType`, `url`) for the browser files.
+- `browser/` - pure runtime decisions and the capability-driven browser adapter.
 
 `internal/` and `assets/private/` are private. Consumers serve the asset URLs through their own HTTP
 boundary; the package never opens a port.
@@ -89,7 +93,9 @@ animation falls back to a whole-face crossfade. Treat that log as a build failur
 `prepareSwap`, `play`, `startSpeaking`, `stopSpeaking`. It must stay consumer-agnostic: contract
 tests assert it contains no `.seat`, `is-turn`, or `is-ai` selectors, and that the iOS compositor
 guard still short-circuits the idle and blink loops. The stylesheet must define package variables as
-consumer-token fallbacks (`--avatar-primary: var(--primary, #d8c4a2)`), which is also asserted.
+consumer-token fallbacks (`--avatar-primary: var(--primary, #d8c4a2)`), which is also asserted. The
+checked script is generated output. `deno task browser:check` fails when it differs from the typed
+source, and `deno task browser:metrics` enforces its branch and complexity budgets.
 
 ## Style
 
