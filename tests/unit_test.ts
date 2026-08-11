@@ -617,7 +617,9 @@ Deno.test("SSR rejects every unsafe SVG class with a warned blank layer", () => 
   const rejectionCases = [
     ["absent root", "", "incomplete root"],
     ["malformed root", "<g></g>", "root element"],
+    ["invalid markup", "<svg><</svg>", "invalid markup"],
     ["unbalanced root", "<svg><path></svg>", "unbalanced element svg"],
+    ["attributes on closing element", '<svg></svg class="closing">', "closing element svg"],
     ["duplicate roots", "<svg></svg><svg></svg>", "root element"],
     ["content outside root", "<svg></svg>trailing", "content after root"],
     ["forbidden element", "<svg><script></script></svg>", "element script"],
@@ -628,6 +630,17 @@ Deno.test("SSR rejects every unsafe SVG class with a warned blank layer", () => 
       '<svg><path fill="url(https://example.test/fill)"/></svg>',
       "URL for fill",
     ],
+    [
+      "entity-obfuscated CSS URL",
+      '<svg><path fill="u&#114;l(https://example.test/fill)"/></svg>',
+      "URL for fill",
+    ],
+    [
+      "escaped CSS URL",
+      String.raw`<svg><path fill="u\72 l(https://example.test/fill)"/></svg>`,
+      "URL for fill",
+    ],
+    ["CSS variable URL", '<svg><path fill="var(--external-paint)"/></svg>', "URL for fill"],
     ["JavaScript URL", '<svg><path fill="javascript:run()"/></svg>', "value for fill"],
     ["HTML data URL", '<svg><path fill="data:text/html,run"/></svg>', "value for fill"],
   ] as const;

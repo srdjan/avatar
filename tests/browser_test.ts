@@ -111,6 +111,45 @@ Deno.test("SSR rig IDs cannot create browser event attributes", async () => {
   }
 });
 
+Deno.test("SSR blocks obfuscated external SVG URLs before browser parsing", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const requestedUrls: string[] = [];
+    await page.route("https://svg-escape.test/**", async (route) => {
+      requestedUrls.push(route.request().url());
+      await route.fulfill({ status: 204, body: "" });
+    });
+    const unsafeSvgs = [
+      '<svg><path d="M0 0h10v10H0z" fill="u&#114;l(https://svg-escape.test/entity)"/></svg>',
+      String.raw`<svg><path d="M0 0h10v10H0z" fill="u\72 l(https://svg-escape.test/css)"/></svg>`,
+    ];
+    const html = (() => {
+      const realWarn = console.warn;
+      const warnings: string[] = [];
+      console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+      try {
+        const result = unsafeSvgs.map((baseSvg, index) =>
+          renderBotRig({ id: `unsafe-${index}`, baseSvg })
+        );
+        assertEquals(warnings.length, unsafeSvgs.length);
+        return result;
+      } finally {
+        console.warn = realWarn;
+      }
+    })();
+
+    for (const rigHtml of html) {
+      await page.setContent(rigHtml);
+    }
+    await page.waitForTimeout(20);
+
+    assertEquals(requestedUrls, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 Deno.test("browser runtime animates an AI turn rig without consumer coupling", async () => {
   const browser = await chromium.launch({ headless: true });
   try {

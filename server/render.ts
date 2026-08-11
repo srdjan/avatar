@@ -54,6 +54,33 @@ const SAFE_SVG_ATTRIBUTES = new Set([
 const SVG_TAG = /<\s*(\/?)\s*([A-Za-z][\w:.-]*)([^<>]*)>/g;
 const SVG_ATTRIBUTE = /\s+([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/y;
 const LOCAL_URL = /^url\(#[A-Za-z_][\w:.-]*\)$/;
+const UNSAFE_URL_SYNTAX = /url\(|^(?:fill|mask)\0[\s\S]*(?:&|\\|var\s*\()/i;
+
+declare const safeInlineSvgBrand: unique symbol;
+
+type SafeInlineSvg = string & Readonly<{ [safeInlineSvgBrand]: true }>;
+
+type SvgRejection =
+  | "root element"
+  | "invalid markup"
+  | "content after root"
+  | "incomplete root"
+  | `element ${string}`
+  | `closing element ${string}`
+  | `unbalanced element ${string}`
+  | `attributes on ${string}`
+  | `attribute ${string}`
+  | `value for ${string}`
+  | `URL for ${string}`;
+
+type SvgValidation =
+  | Readonly<{ tag: "safe"; svg: SafeInlineSvg }>
+  | Readonly<{ tag: "rejected"; reason: SvgRejection }>;
+
+type ReportSvgRejection = (reason: SvgRejection) => void;
+
+const reportSvgRejection: ReportSvgRejection = (reason) =>
+  console.warn(`avatar: unsafe inline SVG rejected (${reason}); rendering a blank layer`);
 
 type CommonInput = Readonly<{
   // Caller-owned token used to derive all DOM ids for this rig instance.
@@ -98,7 +125,7 @@ export type RenderRigInput =
 export function renderFacialRig(input: RenderRigInput): string {
   switch (input.rigKind) {
     case "bot":
-      return wrapRig(input, botLayers(input));
+      return wrapRig(input, botLayers(input, reportSvgRejection));
     case "human-generated":
       return wrapRig(input, humanGeneratedLayers(input));
     case "human-photo":
@@ -107,23 +134,26 @@ export function renderFacialRig(input: RenderRigInput): string {
 }
 
 // Bot layers inline decomposed SVG so the browser can target face groups.
-function botLayers(input: Extract<RenderRigInput, { rigKind: "bot" }>): string {
+function botLayers(
+  input: Extract<RenderRigInput, { rigKind: "bot" }>,
+  reportRejection: ReportSvgRejection,
+): string {
   const base = inlineSvgAttrs(input.baseSvg, {
     "class": "avatar avatar-rigged avatar-base",
     id: `avatar-${input.id}`,
     role: "img",
     "aria-label": input.label,
-  });
+  }, reportRejection);
   const expression = inlineSvgAttrs(input.expressionSvg, {
     "class": "avatar avatar-rigged avatar-expression",
     id: `avatar-expression-${input.id}`,
     "aria-hidden": "true",
-  });
+  }, reportRejection);
   const micro = inlineSvgAttrs(input.microSvg, {
     "class": "avatar avatar-rigged avatar-micro-expression",
     id: `avatar-micro-expression-${input.id}`,
     "aria-hidden": "true",
-  });
+  }, reportRejection);
   return `${base}${expression}${micro}`;
 }
 
@@ -256,22 +286,30 @@ function clampNumber(n: number, min: number, max: number): number {
 // storage written before this grammar existed. One blank face is recoverable;
 // a thrown render is not. The replacement keeps the wrapper attributes so the
 // browser runtime still finds the element it expects.
-function inlineSvgAttrs(svg: string, attrs: Record<string, string>): string {
+function inlineSvgAttrs(
+  svg: string,
+  attrs: Record<string, string>,
+  reportRejection: ReportSvgRejection,
+): string {
   const attrStr = Object.entries(attrs).map(([k, v]) => `${k}="${esc(v)}"`).join(" ");
-  const rejection = inlineSvgRejection(svg);
-  if (rejection !== null) {
-    console.warn(`avatar: unsafe inline SVG rejected (${rejection}); rendering a blank layer`);
+  const validation = validateInlineSvg(svg);
+  if (validation.tag === "rejected") {
+    reportRejection(validation.reason);
     return `<svg ${attrStr} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>`;
   }
   // A function replacement keeps `$&`, "$`" and `$'` in caller-supplied labels
   // and ids literal; a string replacement would re-expand them after esc().
+  return renderInlineSvg(validation.svg, attrStr);
+}
+
+function renderInlineSvg(svg: SafeInlineSvg, attrStr: string): string {
   return svg.replace(/^<svg(?=[\s>])/, () => `<svg ${attrStr}`);
 }
 
 // Inline SVG is executable markup. Keep this grammar deliberately narrower
 // than general SVG and expand it only when package-owned generator output does.
-// Returns the reason the markup is rejected, or null when it is safe to inline.
-function inlineSvgRejection(svg: string): string | null {
+// Produces the only SafeInlineSvg values consumed by the renderer.
+function validateInlineSvg(svg: string): SvgValidation {
   const stack: string[] = [];
   let cursor = 0;
   let rootSeen = false;
@@ -279,41 +317,57 @@ function inlineSvgRejection(svg: string): string | null {
 
   for (const match of svg.matchAll(SVG_TAG)) {
     const index = match.index;
-    if (!rootSeen && index !== 0) return "root element";
-    if (svg.slice(cursor, index).includes("<")) return "invalid markup";
-    if (rootClosed && svg.slice(cursor, index).trim() !== "") return "content after root";
+    if (!rootSeen && index !== 0) return { tag: "rejected", reason: "root element" };
+    if (svg.slice(cursor, index).includes("<")) {
+      return { tag: "rejected", reason: "invalid markup" };
+    }
+    if (rootClosed && svg.slice(cursor, index).trim() !== "") {
+      return { tag: "rejected", reason: "content after root" };
+    }
 
     const closing = match[1] === "/";
     const element = match[2]!;
     const rawAttributes = match[3]!;
-    if (!SAFE_SVG_ELEMENTS.has(element)) return `element ${element}`;
+    if (!SAFE_SVG_ELEMENTS.has(element)) {
+      return { tag: "rejected", reason: `element ${element}` };
+    }
 
     if (closing) {
-      if (rawAttributes.trim() !== "") return `closing element ${element}`;
-      if (stack.pop() !== element) return `unbalanced element ${element}`;
+      if (rawAttributes.trim() !== "") {
+        return { tag: "rejected", reason: `closing element ${element}` };
+      }
+      if (stack.pop() !== element) {
+        return { tag: "rejected", reason: `unbalanced element ${element}` };
+      }
       if (stack.length === 0) rootClosed = true;
     } else {
       const selfClosing = rawAttributes.trimEnd().endsWith("/");
       if (stack.length === 0) {
-        if (rootSeen || element !== "svg") return "root element";
+        if (rootSeen || element !== "svg") {
+          return { tag: "rejected", reason: "root element" };
+        }
         rootSeen = true;
       }
       const attributeRejection = svgAttributeRejection(rawAttributes, element);
-      if (attributeRejection !== null) return attributeRejection;
+      if (attributeRejection !== null) {
+        return { tag: "rejected", reason: attributeRejection };
+      }
       if (!selfClosing) stack.push(element);
       else if (stack.length === 0) rootClosed = true;
     }
     cursor = index + match[0].length;
   }
 
-  if (!rootSeen || !rootClosed || stack.length !== 0) return "incomplete root";
-  if (svg.slice(cursor).trim() !== "" || svg.slice(cursor).includes("<")) {
-    return "content after root";
+  if (!rootSeen || !rootClosed || stack.length !== 0) {
+    return { tag: "rejected", reason: "incomplete root" };
   }
-  return null;
+  if (svg.slice(cursor).trim() !== "" || svg.slice(cursor).includes("<")) {
+    return { tag: "rejected", reason: "content after root" };
+  }
+  return { tag: "safe", svg: svg as SafeInlineSvg };
 }
 
-function svgAttributeRejection(source: string, element: string): string | null {
+function svgAttributeRejection(source: string, element: string): SvgRejection | null {
   let cursor = 0;
   while (!/^[\s/]*$/.test(source.slice(cursor))) {
     SVG_ATTRIBUTE.lastIndex = cursor;
@@ -325,7 +379,9 @@ function svgAttributeRejection(source: string, element: string): string | null {
       return `attribute ${name}`;
     }
     if (/javascript\s*:|data\s*:\s*text\/html/i.test(value)) return `value for ${name}`;
-    if (/url\(/i.test(value) && !LOCAL_URL.test(value)) return `URL for ${name}`;
+    if (UNSAFE_URL_SYNTAX.test(`${name}\0${value}`) && !LOCAL_URL.test(value)) {
+      return `URL for ${name}`;
+    }
     cursor = SVG_ATTRIBUTE.lastIndex;
   }
   return null;
