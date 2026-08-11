@@ -2,8 +2,8 @@ import { assert, assertEquals } from "jsr:@std/assert@1.0.14";
 import { AVATAR_ASSETS, AVATAR_AUDIO_ASSETS, DEFAULT_VOICE_PACK } from "@srdjan/avatar/assets";
 
 const EXPECTED_HASHES: Readonly<Record<keyof typeof AVATAR_ASSETS, string>> = {
-  facialRigScript: "6f6a319b682ebb16c7eaf83d612a68e8ea6096506b5a795f87e7d6065f410b0c",
-  facialRigStyles: "ff32798945b259012b98f374a079bc380bbd402ec94a471f72f407e0b52dd05b",
+  facialRigScript: "2ee80ef982f84dbe657c86eb9d802f23dc9676f7766c6abb0319913c9a8221e6",
+  facialRigStyles: "6753dc84ede97d0ae70784e1a2a0d85353fd90193fc11f8f3198a11844ef0fc1",
   haha: "838c4863398dba33f794faf5a640d592fa577e420a57114ef7d113d146532ca2",
   hahaha: "20351581b4b41bb7ed9eae615793598d9140c7202a5557f548d7d903aedb72cc",
   nenene: "f218486f54ad12c226d31bbc065251bb6187e2fbdd08c60db040eb075c193bc3",
@@ -72,7 +72,7 @@ Deno.test("the checked browser script rebuilds from pinned inputs", async () => 
 Deno.test("public package boundary has exactly three entry points", async () => {
   const config = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
   assertEquals(config.name, "@srdjan/avatar");
-  assertEquals(config.version, "0.3.0");
+  assertEquals(config.version, "0.4.0");
   assertEquals(config.exports, {
     ".": "./mod.ts",
     "./server": "./server/mod.ts",

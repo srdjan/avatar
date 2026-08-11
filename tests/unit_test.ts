@@ -16,6 +16,7 @@ import {
 } from "@srdjan/avatar";
 import {
   avataaarsPreset,
+  createRigControlBank,
   decomposeFaceFeatures,
   expressionVariantForBot,
   renderFacialRig,
@@ -453,6 +454,108 @@ Deno.test("SSR renders each avatar ADT branch and escapes caller text", () => {
   assert(photoHtml.includes('width="40" height="40"'));
   assert(photoHtml.includes('data-rig-signature="human-photo:'));
   assert(photoHtml.includes("x=1&amp;y=2"));
+});
+
+Deno.test("control artwork banks map every preset and gesture by substrate", () => {
+  const generator = createAvatarGenerator();
+  const bot = generator.forBot("mason-steady");
+  assert(bot.kind === "bot");
+  const botBank = createRigControlBank(bot);
+  assert(botBank !== null && botBank.rigKind === "bot");
+  assertEquals(Object.keys(botBank.layers), [
+    "neutral",
+    "focused",
+    "smile",
+    "sad",
+    "worry",
+    "mad",
+    "surprised",
+    "laugh",
+  ]);
+  assertStrictEquals(botBank.layers.neutral, bot.emotions.focused);
+  assertStrictEquals(botBank.layers.smile, bot.emotions.happy);
+  assertStrictEquals(botBank.layers.worry, bot.emotions.dizzy);
+  assertStrictEquals(botBank.layers.laugh, bot.emotions.laughing);
+
+  const human = generator.forHuman({ picture: null, seed: "control-bank" });
+  assert(human.kind === "human-generated");
+  const humanBank = createRigControlBank(human);
+  assert(humanBank !== null && humanBank.rigKind === "human-generated");
+  assertStrictEquals(humanBank.layers.smile, human.expressions.happiness);
+  assertStrictEquals(humanBank.layers.worry, human.expressions.fear);
+  assertStrictEquals(humanBank.layers.mad, human.expressions.anger);
+  assertStrictEquals(humanBank.layers.laugh, human.expressions.happiness);
+
+  assertEquals(
+    createRigControlBank(generator.forHuman({ picture: "photo.jpg", seed: "ignored" })),
+    null,
+  );
+});
+
+Deno.test("SSR renders validated opt-in control banks without changing the default markup", () => {
+  const generator = createAvatarGenerator();
+  const bot = generator.forBot("mason-steady");
+  assert(bot.kind === "bot");
+  const common = {
+    id: "controlled",
+    label: "Controlled bot",
+    reaction: null,
+    precedingReaction: null,
+    microReaction: null,
+    personality: { amplitudeScale: 1, durationScale: 0.8, audioProbability: 0 },
+    rigKind: "bot",
+    baseSvg: bot.src,
+    expressionSvg: bot.emotions.focused,
+    microSvg: bot.emotions.focused,
+  } as const;
+  const withoutBank = renderFacialRig(common);
+  assertEquals(withoutBank.includes("avatar-control-layer"), false);
+  assertStringIncludes(withoutBank, 'data-seat-duration-scale="0.8"');
+
+  const withBank = renderFacialRig({
+    ...common,
+    controlBank: createRigControlBank(bot),
+  });
+  assertEquals(withBank.match(/class="avatar-control-layer"/g)?.length, 6);
+  assertEquals(
+    withBank.match(/class="avatar avatar-rigged avatar-control-expression"/g)?.length,
+    6,
+  );
+  assertStringIncludes(withBank, 'data-control-layer="worry surprised"');
+  assertStringIncludes(withBank, 'data-control-layer="laugh"');
+  assertStringIncludes(withBank, 'aria-hidden="true"');
+
+  const controlBank = createRigControlBank(bot);
+  const reorderedBank = {
+    ...controlBank,
+    layers: Object.fromEntries(Object.entries(controlBank.layers).reverse()),
+  } as typeof controlBank;
+  const reordered = renderFacialRig({ ...common, controlBank: reorderedBank });
+  assertEquals(
+    reordered.match(/data-rig-signature="([^"]+)"/)?.[1],
+    withBank.match(/data-rig-signature="([^"]+)"/)?.[1],
+  );
+
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const unsafeBank = {
+      ...createRigControlBank(bot),
+      layers: {
+        ...createRigControlBank(bot).layers,
+        smile: '<svg><script onload="pwn()"></script></svg>',
+      },
+    };
+    const sanitized = renderFacialRig({ ...common, controlBank: unsafeBank });
+    assertEquals(sanitized.includes("<script"), false);
+    assertEquals(sanitized.match(/viewBox="0 0 1 1"/g)?.length, 1);
+  } finally {
+    console.warn = realWarn;
+  }
+  assertEquals(warnings, [
+    "avatar: unsafe inline SVG rejected (element script); rendering a blank layer",
+  ]);
 });
 
 Deno.test("SSR serializes every reaction field and null reaction default", () => {

@@ -1,3 +1,13 @@
+import {
+  RIG_CONTROL_FEATURES,
+  RIG_CONTROL_GESTURES,
+  RIG_CONTROL_PRESETS,
+  type RigControlFeature,
+  type RigControlFeatureValues,
+  type RigControlPreset,
+  type RigControlRejectionReason,
+} from "../types.ts";
+
 export type RigKind = "bot" | "human-generated" | "human-photo" | "unknown";
 
 export type ReactionPayload =
@@ -108,6 +118,458 @@ function rigEffects(
   }
   if (micro !== null) effects.push({ tag: "start-micro", reaction: micro });
   return effects;
+}
+
+export type ParsedRigControlCommand =
+  | Readonly<{
+    tag: "set";
+    rigId: string;
+    sourceId: string;
+    sequence: number;
+    preset: RigControlPreset;
+    features: RigControlFeatureValues;
+    transitionMs: number;
+  }>
+  | Readonly<{
+    tag: "trigger";
+    rigId: string;
+    sourceId: string;
+    sequence: number;
+    gesture: "laugh";
+    intensity: number;
+    durationMs: number;
+  }>
+  | Readonly<{
+    tag: "release";
+    rigId: string;
+    sourceId: string;
+    sequence: number;
+    transitionMs: number;
+  }>;
+
+export type RigControlParseResult =
+  | Readonly<{ tag: "parsed"; command: ParsedRigControlCommand }>
+  | Readonly<{ tag: "rejected"; reason: "invalid-command" }>;
+
+export type RigControlState = Readonly<{
+  ownerSourceId: string | null;
+  lastSequenceBySource: Readonly<Record<string, number>>;
+  affect: Extract<ParsedRigControlCommand, { tag: "set" }> | null;
+  gesture: Extract<ParsedRigControlCommand, { tag: "trigger" }> | null;
+}>;
+
+export type RigControlEffect =
+  | Readonly<{
+    tag: "set-affect";
+    command: Extract<ParsedRigControlCommand, { tag: "set" }>;
+  }>
+  | Readonly<{
+    tag: "trigger-gesture";
+    command: Extract<ParsedRigControlCommand, { tag: "trigger" }>;
+  }>
+  | Readonly<{ tag: "release-affect"; transitionMs: number }>;
+
+export type RigControlTransition = Readonly<{
+  state: RigControlState;
+  decision:
+    | Readonly<{ tag: "accepted" }>
+    | Readonly<{
+      tag: "rejected";
+      reason: Extract<RigControlRejectionReason, "stale-sequence" | "source-busy">;
+    }>;
+  effects: ReadonlyArray<RigControlEffect>;
+}>;
+
+export type RigControlPose = Readonly<{
+  features: Readonly<Record<RigControlFeature, number>>;
+  eyes: Readonly<{ translateY: number; scaleY: number }>;
+  brows: Readonly<{ translateY: number; scaleY: number }>;
+  mouth: Readonly<{ translateY: number; scaleX: number; scaleY: number }>;
+  layer: Readonly<{
+    translateX: number;
+    translateY: number;
+    rotate: number;
+    scale: number;
+  }>;
+}>;
+
+type FullFeatureValues = Readonly<Record<RigControlFeature, number>>;
+
+const EMPTY_FEATURES: FullFeatureValues = Object.freeze({
+  browInnerRaise: 0,
+  browLower: 0,
+  eyeWiden: 0,
+  eyeSquint: 0,
+  cheekRaise: 0,
+  mouthCornerLift: 0,
+  mouthCornerDrop: 0,
+  jawOpen: 0,
+});
+
+const CONTROL_PRESET_FEATURES = {
+  neutral: EMPTY_FEATURES,
+  focused: {
+    ...EMPTY_FEATURES,
+    browLower: 0.35,
+    eyeSquint: 0.22,
+  },
+  smile: {
+    ...EMPTY_FEATURES,
+    browInnerRaise: 0.1,
+    eyeSquint: 0.2,
+    cheekRaise: 0.45,
+    mouthCornerLift: 0.65,
+    jawOpen: 0.08,
+  },
+  sad: {
+    ...EMPTY_FEATURES,
+    browInnerRaise: 0.55,
+    eyeSquint: 0.1,
+    mouthCornerDrop: 0.55,
+  },
+  worry: {
+    ...EMPTY_FEATURES,
+    browInnerRaise: 0.75,
+    eyeWiden: 0.45,
+    mouthCornerDrop: 0.25,
+    jawOpen: 0.08,
+  },
+  mad: {
+    ...EMPTY_FEATURES,
+    browLower: 0.8,
+    eyeSquint: 0.55,
+    mouthCornerDrop: 0.3,
+  },
+  surprised: {
+    ...EMPTY_FEATURES,
+    browInnerRaise: 0.7,
+    eyeWiden: 0.85,
+    jawOpen: 0.8,
+  },
+} as const satisfies Readonly<Record<RigControlPreset, FullFeatureValues>>;
+
+const CONTROL_PRESET_LAYER = {
+  neutral: [0, 0, 0, 1],
+  focused: [0.4, 0, -0.5, 1],
+  smile: [0, -1, -1, 1.02],
+  sad: [0, 1.5, 1.5, 0.99],
+  worry: [0, -0.5, 2, 1.01],
+  mad: [-0.8, 0, -2, 1.01],
+  surprised: [0, -2, 0, 1.04],
+} as const satisfies Readonly<Record<RigControlPreset, readonly [number, number, number, number]>>;
+
+export function parseRigControlCommand(input: unknown): RigControlParseResult {
+  try {
+    return parseRigControlCommandUnchecked(input);
+  } catch {
+    return invalidControlCommand();
+  }
+}
+
+type ControlEnvelopeSnapshot = Readonly<{
+  tag: unknown;
+  rigId: unknown;
+  sourceId: unknown;
+  sequence: unknown;
+}>;
+
+type ValidControlEnvelope = Readonly<{
+  tag: unknown;
+  rigId: string;
+  sourceId: string;
+  sequence: number;
+}>;
+
+function parseRigControlCommandUnchecked(input: unknown): RigControlParseResult {
+  if (!isRecord(input)) return invalidControlCommand();
+  const envelope: ControlEnvelopeSnapshot = {
+    tag: input.tag,
+    rigId: input.rigId,
+    sourceId: input.sourceId,
+    sequence: input.sequence,
+  };
+  if (!hasControlEnvelope(envelope)) return invalidControlCommand();
+  switch (envelope.tag) {
+    case "set":
+      return parseSetControlCommand(input, envelope);
+    case "trigger":
+      return parseTriggerControlCommand(input, envelope);
+    case "release":
+      return parseReleaseControlCommand(input, envelope);
+    default:
+      return invalidControlCommand();
+  }
+}
+
+function parseSetControlCommand(
+  input: Readonly<Record<string, unknown>>,
+  envelope: ValidControlEnvelope,
+): RigControlParseResult {
+  const preset = input.preset;
+  const rawFeatures = input.features;
+  const rawTransitionMs = input.transitionMs;
+  if (
+    !hasOnlyKeys(input, [
+      "tag",
+      "rigId",
+      "sourceId",
+      "sequence",
+      "preset",
+      "features",
+      "transitionMs",
+    ]) ||
+    !isOneOf(preset, RIG_CONTROL_PRESETS)
+  ) return invalidControlCommand();
+  const features = parseControlFeatures(rawFeatures);
+  const transitionMs = optionalNumberInRange(rawTransitionMs, 180, 0, 2_000);
+  if (features === null || transitionMs === null) return invalidControlCommand();
+  return {
+    tag: "parsed",
+    command: {
+      tag: "set",
+      rigId: envelope.rigId,
+      sourceId: envelope.sourceId,
+      sequence: envelope.sequence,
+      preset,
+      features,
+      transitionMs,
+    },
+  };
+}
+
+function parseTriggerControlCommand(
+  input: Readonly<Record<string, unknown>>,
+  envelope: ValidControlEnvelope,
+): RigControlParseResult {
+  const gesture = input.gesture;
+  const rawIntensity = input.intensity;
+  const rawDurationMs = input.durationMs;
+  if (
+    !hasOnlyKeys(input, [
+      "tag",
+      "rigId",
+      "sourceId",
+      "sequence",
+      "gesture",
+      "intensity",
+      "durationMs",
+    ]) ||
+    !isOneOf(gesture, RIG_CONTROL_GESTURES)
+  ) return invalidControlCommand();
+  const intensity = optionalNumberInRange(rawIntensity, 1, 0, 1);
+  const durationMs = optionalNumberInRange(rawDurationMs, 900, 100, 5_000);
+  if (intensity === null || durationMs === null) return invalidControlCommand();
+  return {
+    tag: "parsed",
+    command: {
+      tag: "trigger",
+      rigId: envelope.rigId,
+      sourceId: envelope.sourceId,
+      sequence: envelope.sequence,
+      gesture,
+      intensity,
+      durationMs,
+    },
+  };
+}
+
+function parseReleaseControlCommand(
+  input: Readonly<Record<string, unknown>>,
+  envelope: ValidControlEnvelope,
+): RigControlParseResult {
+  const rawTransitionMs = input.transitionMs;
+  if (!hasOnlyKeys(input, ["tag", "rigId", "sourceId", "sequence", "transitionMs"])) {
+    return invalidControlCommand();
+  }
+  const transitionMs = optionalNumberInRange(rawTransitionMs, 180, 0, 2_000);
+  if (transitionMs === null) return invalidControlCommand();
+  return {
+    tag: "parsed",
+    command: {
+      tag: "release",
+      rigId: envelope.rigId,
+      sourceId: envelope.sourceId,
+      sequence: envelope.sequence,
+      transitionMs,
+    },
+  };
+}
+
+function hasControlEnvelope(input: ControlEnvelopeSnapshot): input is ValidControlEnvelope {
+  const sequence = typeof input.sequence === "number" ? input.sequence : -1;
+  return [
+    isNonEmptyString(input.rigId),
+    isNonEmptyString(input.sourceId),
+    Number.isSafeInteger(sequence),
+    sequence >= 0,
+  ].every(Boolean);
+}
+
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === "string" ? value.length > 0 : false;
+}
+
+function parseControlFeatures(value: unknown): RigControlFeatureValues | null {
+  if (value === undefined) return {};
+  if (!isRecord(value) || !hasOnlyKeys(value, RIG_CONTROL_FEATURES)) return null;
+  const entries: Array<readonly [RigControlFeature, number]> = [];
+  for (const feature of RIG_CONTROL_FEATURES) {
+    const coefficient = value[feature];
+    if (coefficient === undefined) continue;
+    if (!numberInRange(coefficient, 0, 1)) return null;
+    entries.push([feature, coefficient]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function optionalNumberInRange(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number | null {
+  if (value === undefined) return fallback;
+  return numberInRange(value, min, max) ? value : null;
+}
+
+function numberInRange(value: unknown, min: number, max: number): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
+}
+
+function hasOnlyKeys(
+  input: Readonly<Record<string, unknown>>,
+  allowed: ReadonlyArray<string>,
+): boolean {
+  return Object.keys(input).every((key) => allowed.includes(key));
+}
+
+function isOneOf<const Value extends string>(
+  value: unknown,
+  allowed: ReadonlyArray<Value>,
+): value is Value {
+  return typeof value === "string" && allowed.includes(value as Value);
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return Object.prototype.toString.call(value) === "[object Object]";
+}
+
+function invalidControlCommand(): RigControlParseResult {
+  return { tag: "rejected", reason: "invalid-command" };
+}
+
+export function initialRigControlState(): RigControlState {
+  return {
+    ownerSourceId: null,
+    lastSequenceBySource: {},
+    affect: null,
+    gesture: null,
+  };
+}
+
+export function reduceRigControl(
+  state: RigControlState,
+  command: ParsedRigControlCommand,
+): RigControlTransition {
+  const previousSequence = Object.getOwnPropertyDescriptor(
+    state.lastSequenceBySource,
+    command.sourceId,
+  )?.value as number | undefined;
+  if (previousSequence !== undefined && command.sequence <= previousSequence) {
+    return rejectedControlTransition(state, "stale-sequence");
+  }
+  if (state.ownerSourceId !== null && state.ownerSourceId !== command.sourceId) {
+    return rejectedControlTransition(state, "source-busy");
+  }
+  const sequenced = {
+    ...state,
+    lastSequenceBySource: {
+      ...state.lastSequenceBySource,
+      [command.sourceId]: command.sequence,
+    },
+  };
+  switch (command.tag) {
+    case "set":
+      return {
+        state: { ...sequenced, ownerSourceId: command.sourceId, affect: command },
+        decision: { tag: "accepted" },
+        effects: [{ tag: "set-affect", command }],
+      };
+    case "trigger":
+      return {
+        state: { ...sequenced, ownerSourceId: command.sourceId, gesture: command },
+        decision: { tag: "accepted" },
+        effects: [{ tag: "trigger-gesture", command }],
+      };
+    case "release":
+      return {
+        state: { ...sequenced, ownerSourceId: null, affect: null, gesture: null },
+        decision: { tag: "accepted" },
+        effects: [{ tag: "release-affect", transitionMs: command.transitionMs }],
+      };
+  }
+}
+
+function rejectedControlTransition(
+  state: RigControlState,
+  reason: "stale-sequence" | "source-busy",
+): RigControlTransition {
+  return { state, decision: { tag: "rejected", reason }, effects: [] };
+}
+
+export function compileRigControlPose(
+  preset: RigControlPreset,
+  overrides: RigControlFeatureValues,
+  amplitude: number,
+): RigControlPose {
+  const features = { ...CONTROL_PRESET_FEATURES[preset], ...overrides };
+  const safeAmplitude = Number.isFinite(amplitude) ? Math.max(0, amplitude) : 1;
+  const eyesScaleY = 1 + features.eyeWiden * 0.4 - features.eyeSquint * 0.5 -
+    features.cheekRaise * 0.2;
+  const browsScaleY = 1 + features.browInnerRaise * 0.15 - features.browLower * 0.1;
+  const mouthScaleX = 1 + (features.mouthCornerLift - features.mouthCornerDrop) * 0.08;
+  const [translateX, translateY, rotate, scale] = CONTROL_PRESET_LAYER[preset];
+  return {
+    features,
+    eyes: {
+      translateY: scaledLinear(-features.cheekRaise, safeAmplitude),
+      scaleY: scaledFromOne(eyesScaleY, safeAmplitude),
+    },
+    brows: {
+      translateY: scaledLinear(
+        -features.browInnerRaise * 6 + features.browLower * 5,
+        safeAmplitude,
+      ),
+      scaleY: scaledFromOne(browsScaleY, safeAmplitude),
+    },
+    mouth: {
+      translateY: scaledLinear(
+        -features.mouthCornerLift * 2 + features.mouthCornerDrop * 2,
+        safeAmplitude,
+      ),
+      scaleX: scaledFromOne(mouthScaleX, safeAmplitude),
+      scaleY: scaledFromOne(1 + features.jawOpen * 0.8, safeAmplitude),
+    },
+    layer: {
+      translateX: scaledLinear(translateX, safeAmplitude),
+      translateY: scaledLinear(translateY, safeAmplitude),
+      rotate: scaledLinear(rotate, safeAmplitude),
+      scale: scaledFromOne(scale, safeAmplitude),
+    },
+  };
+}
+
+function scaledLinear(value: number, amplitude: number): number {
+  return roundedControlNumber(value * amplitude);
+}
+
+function scaledFromOne(value: number, amplitude: number): number {
+  return roundedControlNumber(1 + (value - 1) * amplitude);
+}
+
+function roundedControlNumber(value: number): number {
+  const rounded = Math.round(value * 1_000_000) / 1_000_000;
+  return Object.is(rounded, -0) ? 0 : rounded;
 }
 
 export type AudioPolicyState = Readonly<{

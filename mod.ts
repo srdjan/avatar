@@ -1,6 +1,13 @@
 export { BUILT_IN_BOT_PROFILES, createAvatarGenerator } from "./internal/generator.ts";
 export type { BotAvatarProfileId } from "./internal/generator.ts";
-export { AVATAR_EXPRESSIONS, BOT_EMOTIONS } from "./types.ts";
+export {
+  AVATAR_EXPRESSIONS,
+  BOT_EMOTIONS,
+  RIG_CONTROL_ARTWORK,
+  RIG_CONTROL_FEATURES,
+  RIG_CONTROL_GESTURES,
+  RIG_CONTROL_PRESETS,
+} from "./types.ts";
 export type {
   Avatar,
   AvatarExpression,
@@ -9,9 +16,21 @@ export type {
   BotAvatarProfileCatalog,
   BotEmotion,
   BotFaceShape,
+  FacialRigApi,
   ProfileId,
   ReactionSpec,
   RigBotEmotion,
+  RigControlArtwork,
+  RigControlBank,
+  RigControlCapabilities,
+  RigControlCapability,
+  RigControlCommand,
+  RigControlFeature,
+  RigControlFeatureValues,
+  RigControlGesture,
+  RigControlPreset,
+  RigControlReceipt,
+  RigControlRejectionReason,
   RigExpression,
   RigIntensity,
   RigKind,

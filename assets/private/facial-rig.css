@@ -29,6 +29,17 @@
   --avatar-red-suit: var(--red-suit, #8d3d34);
   --reaction-tint: transparent;
   --micro-tint: transparent;
+  --control-tint: transparent;
+  --control-transition-ms: 180ms;
+  --control-layer-x: 0px;
+  --control-layer-y: 0px;
+  --control-layer-roll: 0deg;
+  --control-layer-scale: 1;
+  --control-gesture-y: 0px;
+  --control-gesture-scale: 1;
+  --control-eyes-transform: translateY(0) scaleY(1);
+  --control-brows-transform: translateY(0) scaleY(1);
+  --control-mouth-transform: translateY(0) scaleX(1) scaleY(1);
   --rig-axis-x: 0px;
   --rig-axis-y: 0px;
   --rig-axis-roll: 0deg;
@@ -257,6 +268,27 @@
   --micro-tint: var(--avatar-secondary);
 }
 
+.avatar-rig[data-control-preset="neutral"],
+.avatar-rig[data-control-preset="focused"] {
+  --control-tint: var(--avatar-primary);
+}
+.avatar-rig[data-control-preset="smile"],
+.avatar-rig[data-control-preset="laugh"] {
+  --control-tint: var(--avatar-primary-fixed);
+}
+.avatar-rig[data-control-preset="sad"] {
+  --control-tint: var(--avatar-ivory-faint);
+}
+.avatar-rig[data-control-preset="worry"] {
+  --control-tint: var(--avatar-tertiary);
+}
+.avatar-rig[data-control-preset="mad"] {
+  --control-tint: var(--avatar-red-suit);
+}
+.avatar-rig[data-control-preset="surprised"] {
+  --control-tint: var(--avatar-secondary);
+}
+
 /* Outline tint visible across all rig kinds (bot, human-generated, photo).
    For bots without overlay artwork yet this is the main facial signal; for
    photos it is the only acceptable facial signal (uncanny otherwise). */
@@ -272,6 +304,15 @@
   outline: 2px solid color-mix(in oklch, var(--micro-tint) 74%, transparent);
   outline-offset: 2px;
   transition: outline-color 180ms ease;
+}
+
+.avatar-rig.is-control-active .avatar.avatar-base,
+.avatar-rig.is-control-active .avatar.avatar-control-expression {
+  outline: 2px solid color-mix(in oklch, var(--control-tint) 70%, transparent);
+  outline-offset: 2px;
+  transition-property: outline-color;
+  transition-duration: var(--control-transition-ms);
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* Per-feature facial rig (bots only).
@@ -617,6 +658,7 @@
 }
 
 .avatar-rig.is-speaking .avatar-expression .face-mouth,
+.avatar-rig.is-speaking .avatar-control-expression .face-mouth,
 .avatar-rig.is-speaking .avatar-base .face-mouth {
   will-change: transform;
 }
@@ -651,20 +693,49 @@
   z-index: 1;
   transition: opacity 700ms ease;
 }
+.avatar-rig:not([data-rig-kind="human-photo"]).is-control-releasing > .avatar-base {
+  transition-duration: var(--control-transition-ms);
+}
+.avatar-rig:not([data-rig-kind="human-photo"]) > .avatar-control-expression {
+  grid-column: 1;
+  grid-row: 1;
+  opacity: 0;
+  transform: translateX(var(--control-layer-x))
+    translateY(calc(var(--control-layer-y) + var(--control-gesture-y)))
+    rotate(var(--control-layer-roll))
+    scale(calc(var(--control-layer-scale) * var(--control-gesture-scale)));
+  transform-origin: 50% 60%;
+  z-index: 2;
+  transition-property: opacity, transform;
+  transition-duration: var(--control-transition-ms);
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+.avatar-rig:not([data-rig-kind="human-photo"]) > .avatar-control-expression.is-control-current {
+  opacity: 1;
+}
+.avatar-rig:not([data-rig-kind="human-photo"]) > .avatar-control-expression.is-control-outgoing {
+  opacity: 0;
+}
 .avatar-rig:not([data-rig-kind="human-photo"]) > .avatar-expression {
   opacity: 0;
   transform-origin: 50% 60%;
-  z-index: 2;
+  z-index: 3;
   transition: opacity 700ms ease;
 }
 .avatar-rig:not([data-rig-kind="human-photo"]) > .avatar-micro-expression {
   opacity: 0;
   transform-origin: 50% 60%;
-  z-index: 3;
+  z-index: 4;
   filter: saturate(1.08) brightness(1.04);
   transition: opacity 900ms ease;
 }
 .avatar-rig:not([data-rig-kind="human-photo"]).is-reacting > .avatar-base {
+  opacity: 0;
+}
+.avatar-rig:not([data-rig-kind="human-photo"]).is-control-active.has-control-artwork > .avatar-base {
+  opacity: 0;
+}
+.avatar-rig:not([data-rig-kind="human-photo"]).is-reacting:not(.is-control-gesturing) > .avatar-control-expression {
   opacity: 0;
 }
 .avatar-rig:not([data-rig-kind="human-photo"]).is-reacting > .avatar-expression {
@@ -675,6 +746,40 @@
 .avatar-rig:not([data-rig-kind="human-photo"]).is-micro-reacting > .avatar-micro-expression {
   opacity: 1;
   animation: rig-micro-expression-react var(--micro-duration-ms, 2000ms) ease-in-out 1;
+}
+
+.avatar-rig[data-rig-kind="bot"].is-control-active.has-control-artwork > .avatar-control-expression .face-eyes,
+.avatar-rig[data-rig-kind="bot"].is-control-active:not(.has-control-artwork) > .avatar-base .face-eyes {
+  transform: var(--control-eyes-transform);
+  transition-property: transform;
+  transition-duration: var(--control-transition-ms);
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.avatar-rig[data-rig-kind="bot"].is-control-active.has-control-artwork > .avatar-control-expression .face-brows,
+.avatar-rig[data-rig-kind="bot"].is-control-active:not(.has-control-artwork) > .avatar-base .face-brows {
+  transform: var(--control-brows-transform);
+  transition-property: transform;
+  transition-duration: var(--control-transition-ms);
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.avatar-rig[data-rig-kind="bot"].is-control-active.has-control-artwork > .avatar-control-expression .face-mouth,
+.avatar-rig[data-rig-kind="bot"].is-control-active:not(.has-control-artwork):not(.is-speaking) > .avatar-base .face-mouth {
+  transform: var(--control-mouth-transform);
+  transition-property: transform;
+  transition-duration: var(--control-transition-ms);
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.avatar-rig.is-control-gesturing > .avatar-control-expression {
+  opacity: 1;
+  z-index: 5;
+  will-change: transform;
+}
+
+.avatar-rig[data-rig-kind="human-generated"].is-speaking > img.avatar {
+  will-change: scale;
 }
 
 /* Combined facial-reaction beat: scale overshoot + brightness pulse fire
@@ -952,6 +1057,7 @@
     .avatar-rig.motion-sink,
     .avatar-rig.is-micro-reacting,
     .avatar-rig.is-reacting > .avatar-expression,
+    .avatar-rig.is-control-gesturing > .avatar-control-expression,
     .avatar-rig.is-micro-reacting > .avatar-micro-expression {
       animation: none !important;
     }
@@ -995,6 +1101,13 @@
   .avatar-rig.is-micro-reacting > .avatar-micro-expression .face-mouth,
   .avatar-rig.is-micro-reacting > .avatar-micro-expression .face-brows {
     animation: none !important;
+  }
+  .avatar-rig > .avatar-control-expression,
+  .avatar-rig.is-control-active .face-eyes,
+  .avatar-rig.is-control-active .face-mouth,
+  .avatar-rig.is-control-active .face-brows {
+    animation: none !important;
+    transition: none !important;
   }
   /* Parallax planes track --rig-head-* which is suppressed elsewhere under
      reduced motion. Pin transform/filter explicitly so any stray var write

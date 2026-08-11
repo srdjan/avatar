@@ -1,5 +1,9 @@
 # Avatar quality re-base findings
 
+> Historical note: this document records the 0.3.0 rebase baseline. Its six-method global constraint
+> was superseded by the approved additive `control()` API in 0.4.0. Use the README and current tests
+> as the authority for live avatar control.
+
 Date: 2026-08-10\
 Baseline: `8297fe9` on local `main`
 

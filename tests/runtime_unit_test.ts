@@ -2,10 +2,14 @@ import { assertEquals } from "jsr:@std/assert@1.0.14";
 import {
   audioEnded,
   audioStarted,
+  compileRigControlPose,
   decideAudio,
   initialAudioPolicy,
+  initialRigControlState,
   initialRigState,
+  parseRigControlCommand,
   type ReactionPayload,
+  reduceRigControl,
   reduceRigSync,
 } from "../browser/runtime_core.ts";
 
@@ -28,6 +32,296 @@ function reaction(
 }
 
 const noReaction = (id = 0): ReactionPayload => ({ tag: "none", id });
+
+Deno.test("control command parser validates finite normalized snapshots", () => {
+  assertEquals(
+    parseRigControlCommand({
+      tag: "set",
+      rigId: "avatar-rig-east",
+      sourceId: "game-state",
+      sequence: 7,
+      preset: "worry",
+      features: { browInnerRaise: 0.8, jawOpen: 0.15 },
+    }),
+    {
+      tag: "parsed",
+      command: {
+        tag: "set",
+        rigId: "avatar-rig-east",
+        sourceId: "game-state",
+        sequence: 7,
+        preset: "worry",
+        features: { browInnerRaise: 0.8, jawOpen: 0.15 },
+        transitionMs: 180,
+      },
+    },
+  );
+  assertEquals(
+    parseRigControlCommand({
+      tag: "trigger",
+      rigId: "avatar-rig-east",
+      sourceId: "game-state",
+      sequence: 8,
+      gesture: "laugh",
+    }),
+    {
+      tag: "parsed",
+      command: {
+        tag: "trigger",
+        rigId: "avatar-rig-east",
+        sourceId: "game-state",
+        sequence: 8,
+        gesture: "laugh",
+        intensity: 1,
+        durationMs: 900,
+      },
+    },
+  );
+  for (
+    const invalid of [
+      null,
+      { tag: "set", rigId: "", sourceId: "source", sequence: 1, preset: "smile" },
+      { tag: "set", rigId: "rig", sourceId: "source", sequence: -1, preset: "smile" },
+      { tag: "set", rigId: "rig", sourceId: "source", sequence: 1, preset: "grin" },
+      {
+        tag: "set",
+        rigId: "rig",
+        sourceId: "source",
+        sequence: 1,
+        preset: "smile",
+        features: { jawOpen: Number.NaN },
+      },
+      {
+        tag: "set",
+        rigId: "rig",
+        sourceId: "source",
+        sequence: 1,
+        preset: "smile",
+        features: { jawOpen: 1.01 },
+      },
+      {
+        tag: "set",
+        rigId: "rig",
+        sourceId: "source",
+        sequence: 1,
+        preset: "smile",
+        features: { unknown: 0.5 },
+      },
+      {
+        tag: "trigger",
+        rigId: "rig",
+        sourceId: "source",
+        sequence: 1,
+        gesture: "laugh",
+        durationMs: 99,
+      },
+    ]
+  ) {
+    assertEquals(parseRigControlCommand(invalid), {
+      tag: "rejected",
+      reason: "invalid-command",
+    });
+  }
+  assertEquals(
+    parseRigControlCommand({
+      tag: "set",
+      rigId: "avatar-rig-east",
+      sourceId: "camera",
+      sequence: Symbol("not-a-sequence"),
+      preset: "smile",
+    }),
+    { tag: "rejected", reason: "invalid-command" },
+  );
+});
+
+Deno.test("control command parser snapshots accessor-backed fields once", () => {
+  const readOnce = <Value>(first: Value, later: unknown, reads: { count: number }) => () => {
+    reads.count++;
+    return reads.count === 1 ? first : later;
+  };
+  const counts = {
+    tag: { count: 0 },
+    rigId: { count: 0 },
+    sourceId: { count: 0 },
+    sequence: { count: 0 },
+    preset: { count: 0 },
+    features: { count: 0 },
+    jawOpen: { count: 0 },
+  };
+  const featureValues = Object.defineProperties({}, {
+    jawOpen: {
+      enumerable: true,
+      get: readOnce(0.4, 2, counts.jawOpen),
+    },
+  });
+  const command = Object.defineProperties({}, {
+    tag: { enumerable: true, get: readOnce("set", "release", counts.tag) },
+    rigId: { enumerable: true, get: readOnce("avatar-rig-east", "", counts.rigId) },
+    sourceId: { enumerable: true, get: readOnce("camera", "", counts.sourceId) },
+    sequence: { enumerable: true, get: readOnce(1, -1, counts.sequence) },
+    preset: { enumerable: true, get: readOnce("smile", "not-a-preset", counts.preset) },
+    features: { enumerable: true, get: readOnce(featureValues, null, counts.features) },
+  });
+
+  assertEquals(parseRigControlCommand(command), {
+    tag: "parsed",
+    command: {
+      tag: "set",
+      rigId: "avatar-rig-east",
+      sourceId: "camera",
+      sequence: 1,
+      preset: "smile",
+      features: { jawOpen: 0.4 },
+      transitionMs: 180,
+    },
+  });
+  assertEquals(
+    Object.fromEntries(Object.entries(counts).map(([field, count]) => [field, count.count])),
+    { tag: 1, rigId: 1, sourceId: 1, sequence: 1, preset: 1, features: 1, jawOpen: 1 },
+  );
+
+  const gestureReads = { count: 0 };
+  const trigger = Object.defineProperty(
+    {
+      tag: "trigger",
+      rigId: "avatar-rig-east",
+      sourceId: "camera",
+      sequence: 2,
+    },
+    "gesture",
+    {
+      enumerable: true,
+      get: readOnce("laugh", "not-a-gesture", gestureReads),
+    },
+  );
+  assertEquals(parseRigControlCommand(trigger), {
+    tag: "parsed",
+    command: {
+      tag: "trigger",
+      rigId: "avatar-rig-east",
+      sourceId: "camera",
+      sequence: 2,
+      gesture: "laugh",
+      intensity: 1,
+      durationMs: 900,
+    },
+  });
+  assertEquals(gestureReads.count, 1);
+
+  const throwing = Object.defineProperty({}, "tag", {
+    enumerable: true,
+    get: () => {
+      throw new Error("hostile accessor");
+    },
+  });
+  assertEquals(parseRigControlCommand(throwing), {
+    tag: "rejected",
+    reason: "invalid-command",
+  });
+});
+
+Deno.test("control reducer enforces one owner and monotonic source sequences", () => {
+  const firstCommand = parseRigControlCommand({
+    tag: "set",
+    rigId: "avatar-rig-east",
+    sourceId: "game-state",
+    sequence: 3,
+    preset: "mad",
+  });
+  if (firstCommand.tag !== "parsed" || firstCommand.command.tag !== "set") {
+    throw new Error("valid command rejected");
+  }
+  const first = reduceRigControl(initialRigControlState(), firstCommand.command);
+  assertEquals(first.decision, { tag: "accepted" });
+  assertEquals(first.effects, [{ tag: "set-affect", command: firstCommand.command }]);
+
+  const staleCommand = { ...firstCommand.command, sequence: 3, preset: "smile" as const };
+  const stale = reduceRigControl(first.state, staleCommand);
+  assertEquals(stale.decision, { tag: "rejected", reason: "stale-sequence" });
+  assertEquals(stale.effects, []);
+
+  const busy = reduceRigControl(first.state, {
+    ...firstCommand.command,
+    sourceId: "camera",
+    sequence: 1,
+  });
+  assertEquals(busy.decision, { tag: "rejected", reason: "source-busy" });
+
+  const released = reduceRigControl(first.state, {
+    tag: "release",
+    rigId: "avatar-rig-east",
+    sourceId: "game-state",
+    sequence: 4,
+    transitionMs: 180,
+  });
+  assertEquals(released.decision, { tag: "accepted" });
+  assertEquals(released.state.ownerSourceId, null);
+  assertEquals(released.effects, [{ tag: "release-affect", transitionMs: 180 }]);
+
+  const nextOwner = reduceRigControl(released.state, {
+    ...firstCommand.command,
+    sourceId: "camera",
+    sequence: 1,
+    preset: "smile",
+  });
+  assertEquals(nextOwner.decision, { tag: "accepted" });
+  assertEquals(nextOwner.state.ownerSourceId, "camera");
+
+  const prototypeNamedSource = reduceRigControl(initialRigControlState(), {
+    tag: "set",
+    rigId: "avatar-rig-east",
+    sourceId: "__proto__",
+    sequence: 1,
+    preset: "focused",
+    features: {},
+    transitionMs: 0,
+  });
+  assertEquals(prototypeNamedSource.decision, { tag: "accepted" });
+  assertEquals(
+    reduceRigControl(prototypeNamedSource.state, {
+      tag: "set",
+      rigId: "avatar-rig-east",
+      sourceId: "__proto__",
+      sequence: 1,
+      preset: "focused",
+      features: {},
+      transitionMs: 0,
+    }).decision,
+    { tag: "rejected", reason: "stale-sequence" },
+  );
+});
+
+Deno.test("control pose compiler applies preset recipes, overrides, and personality", () => {
+  assertEquals(compileRigControlPose("smile", {}, 1), {
+    features: {
+      browInnerRaise: 0.1,
+      browLower: 0,
+      eyeWiden: 0,
+      eyeSquint: 0.2,
+      cheekRaise: 0.45,
+      mouthCornerLift: 0.65,
+      mouthCornerDrop: 0,
+      jawOpen: 0.08,
+    },
+    eyes: { translateY: -0.45, scaleY: 0.81 },
+    brows: { translateY: -0.6, scaleY: 1.015 },
+    mouth: { translateY: -1.3, scaleX: 1.052, scaleY: 1.064 },
+    layer: { translateX: 0, translateY: -1, rotate: -1, scale: 1.02 },
+  });
+  const restrained = compileRigControlPose("worry", {
+    eyeWiden: 0.2,
+    jawOpen: 0,
+  }, 0.5);
+  assertEquals(restrained.features.eyeWiden, 0.2);
+  assertEquals(restrained.features.jawOpen, 0);
+  assertEquals(restrained.eyes.scaleY, 1.04);
+  assertEquals(restrained.layer, {
+    translateX: 0,
+    translateY: -0.25,
+    rotate: 1,
+    scale: 1.005,
+  });
+});
 
 Deno.test("rig reducer sequences preceding, macro, and micro reactions once", () => {
   const first = reduceRigSync(initialRigState(), {

@@ -1,6 +1,11 @@
-import { type Avatar, AVATAR_EXPRESSIONS, createAvatarGenerator } from "@srdjan/avatar";
+import {
+  type Avatar,
+  AVATAR_EXPRESSIONS,
+  createAvatarGenerator,
+  type RigControlCommand,
+} from "@srdjan/avatar";
 import { AVATAR_ASSETS } from "@srdjan/avatar/assets";
-import { renderFacialRig } from "@srdjan/avatar/server";
+import { createRigControlBank, renderFacialRig } from "@srdjan/avatar/server";
 
 export function describeAvatar(avatar: Avatar): string {
   switch (avatar.kind) {
@@ -20,11 +25,16 @@ export function describeAvatar(avatar: Avatar): string {
 }
 
 const generator = createAvatarGenerator();
-export const generatedAvatar = generator.forHuman({ picture: null, seed: "external" });
+export const generatedAvatar = generator.forHuman({
+  picture: null,
+  seed: "external",
+});
 export const generatedDescription = describeAvatar(generatedAvatar);
 
 const bot = generator.forBot("mason-steady");
-if (bot.kind !== "bot") throw new TypeError("built-in bot profile returned a non-bot avatar");
+if (bot.kind !== "bot") {
+  throw new TypeError("built-in bot profile returned a non-bot avatar");
+}
 
 export const renderedBot = renderFacialRig({
   id: "consumer",
@@ -37,6 +47,16 @@ export const renderedBot = renderFacialRig({
   baseSvg: bot.src,
   expressionSvg: bot.emotions.focused,
   microSvg: bot.emotions.focused,
+  controlBank: createRigControlBank(bot),
 });
+
+export const controlCommand = {
+  tag: "set",
+  rigId: "avatar-rig-consumer",
+  sourceId: "external-consumer",
+  sequence: 1,
+  preset: "smile",
+  features: { mouthCornerLift: 0.8 },
+} as const satisfies RigControlCommand;
 
 export const facialRigScriptUrl = AVATAR_ASSETS.facialRigScript.url;

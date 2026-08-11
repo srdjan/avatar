@@ -60,6 +60,133 @@ export type RigPersonality = Readonly<{
   audioProbability: number;
 }>;
 
+export const RIG_CONTROL_PRESETS = [
+  "neutral",
+  "focused",
+  "smile",
+  "sad",
+  "worry",
+  "mad",
+  "surprised",
+] as const;
+
+export type RigControlPreset = (typeof RIG_CONTROL_PRESETS)[number];
+
+export const RIG_CONTROL_GESTURES = ["laugh"] as const;
+
+export type RigControlGesture = (typeof RIG_CONTROL_GESTURES)[number];
+
+export const RIG_CONTROL_FEATURES = [
+  "browInnerRaise",
+  "browLower",
+  "eyeWiden",
+  "eyeSquint",
+  "cheekRaise",
+  "mouthCornerLift",
+  "mouthCornerDrop",
+  "jawOpen",
+] as const;
+
+export type RigControlFeature = (typeof RIG_CONTROL_FEATURES)[number];
+
+export type RigControlFeatureValues = Readonly<
+  Partial<Record<RigControlFeature, number>>
+>;
+
+type RigControlEnvelope = Readonly<{
+  rigId: string;
+  sourceId: string;
+  sequence: number;
+}>;
+
+export type RigControlCommand =
+  | Readonly<
+    & RigControlEnvelope
+    & {
+      tag: "set";
+      preset: RigControlPreset;
+      features?: RigControlFeatureValues;
+      transitionMs?: number;
+    }
+  >
+  | Readonly<
+    & RigControlEnvelope
+    & {
+      tag: "trigger";
+      gesture: RigControlGesture;
+      intensity?: number;
+      durationMs?: number;
+    }
+  >
+  | Readonly<
+    & RigControlEnvelope
+    & {
+      tag: "release";
+      transitionMs?: number;
+    }
+  >;
+
+export type RigControlCapability =
+  | "artwork"
+  | "featurePose"
+  | "wrapperMotion"
+  | "tint"
+  | "speech";
+
+export type RigControlCapabilities = Readonly<Record<RigControlCapability, boolean>>;
+
+export type RigControlRejectionReason =
+  | "invalid-command"
+  | "rig-not-found"
+  | "stale-sequence"
+  | "source-busy";
+
+export type RigControlReceipt =
+  | Readonly<{
+    tag: "accepted";
+    fidelity: "full" | "degraded";
+    rigId: string;
+    sourceId: string;
+    sequence: number;
+    capabilities: RigControlCapabilities;
+    applied: ReadonlyArray<RigControlCapability>;
+    ignoredFeatures: ReadonlyArray<RigControlFeature>;
+  }>
+  | Readonly<{
+    tag: "rejected";
+    reason: RigControlRejectionReason;
+    rigId: string | null;
+    sourceId: string | null;
+    sequence: number | null;
+  }>;
+
+export const RIG_CONTROL_ARTWORK = [
+  ...RIG_CONTROL_PRESETS,
+  ...RIG_CONTROL_GESTURES,
+] as const;
+
+export type RigControlArtwork = (typeof RIG_CONTROL_ARTWORK)[number];
+
+export type RigControlBank =
+  | Readonly<{
+    rigKind: "bot";
+    layers: Readonly<Record<RigControlArtwork, string>>;
+  }>
+  | Readonly<{
+    rigKind: "human-generated";
+    layers: Readonly<Record<RigControlArtwork, string>>;
+  }>;
+
+export type FacialRigApi = Readonly<{
+  init(config?: Readonly<Record<string, unknown>>): void;
+  prepareSwap(fragment: unknown): void;
+  sync(): void;
+  play(request: Readonly<Record<string, unknown>>): void;
+  startSpeaking(rigId: string, cue: string, durationMs: number): void;
+  stopSpeaking(rigId: string): void;
+  control(command: RigControlCommand): RigControlReceipt;
+}>;
+
 export type BotFaceShape =
   | Readonly<{ tag: "default" }>
   | Readonly<{ tag: "aquiline" }>;

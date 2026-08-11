@@ -1,7 +1,7 @@
 # @srdjan/avatar
 
 `@srdjan/avatar` is a local Deno package for deterministic human and bot avatars, facial-rig SSR,
-and the browser assets used by the rig. Version `0.3.0` is intentionally unpublished.
+and the browser assets used by the rig. Version `0.4.0` is intentionally unpublished.
 
 ## Local use
 
@@ -17,14 +17,16 @@ Use only the three public entry points:
 
 ```ts
 import { createAvatarGenerator } from "@srdjan/avatar";
-import { renderFacialRig } from "@srdjan/avatar/server";
+import { createRigControlBank, renderFacialRig } from "@srdjan/avatar/server";
 import { AVATAR_ASSETS, DEFAULT_VOICE_PACK } from "@srdjan/avatar/assets";
 
 const avatars = createAvatarGenerator();
 const bot = avatars.forBot("mason-steady");
+const controlBank = createRigControlBank(bot);
 
 const scriptBytes = await Deno.readFile(AVATAR_ASSETS.facialRigScript.url);
 console.log(bot.kind, scriptBytes.length, DEFAULT_VOICE_PACK.gasp);
+console.log(controlBank?.layers.smile.length);
 ```
 
 `internal/` and `assets/private/` are not module entry points. Serve or copy the asset URLs from
@@ -34,6 +36,10 @@ console.log(bot.kind, scriptBytes.length, DEFAULT_VOICE_PACK.gasp);
 facial-rig SVG vocabulary: active elements, event attributes, executable URLs, and generator output
 outside that vocabulary are never inlined. Rejected markup degrades to one blank layer with a
 `console.warn`, so a single bad avatar cannot fail the caller's whole render.
+
+Pass `createRigControlBank(avatar)` to the matching bot or generated-human `controlBank` field when
+the browser should switch real expression artwork. The bank is optional. Human photos intentionally
+return `null` and keep static tint and outline behavior.
 
 ## Browser contract
 
@@ -79,6 +85,7 @@ hardcoding it, so a renamed asset stays consistent on both sides of the HTTP bou
 | `init(config)`                   | One-time setup. Set `audioAssets`, `silenceSrc`, `isAudioEnabled`.     |
 | `prepareSwap(fragment)`          | Preserve live rig nodes during HTMX swaps while accepting fresh state. |
 | `sync()`                         | Re-scan `.avatar-rig` elements and apply pending reactions.            |
+| `control(command)`               | Set, trigger, or release externally owned live affect.                 |
 | `play(req)`                      | Imperative voice-cue trigger. Normally called internally on reactions. |
 | `startSpeaking` / `stopSpeaking` | Drive the speaking-mouth envelope from an audio source.                |
 
@@ -94,6 +101,54 @@ rigEl.addEventListener("facial-rig:voice-cue", (e) => {
 
 Per-seat probability comes from `personality.audioProbability` on the SSR side, which the renderer
 writes as `data-seat-audio-probability`. A value of `0` mutes the seat.
+
+### External live control
+
+`control()` accepts a tagged command and returns an accepted or rejected receipt. A source owns one
+rig until it releases it. Its `sequence` must be a strictly increasing safe non-negative integer.
+Continuous `set` snapshots are coalesced so only the freshest value is painted once per animation
+frame. Discrete `trigger` and `release` edges apply immediately.
+
+```js
+const first = window.FacialRig.control({
+  tag: "set",
+  rigId: "avatar-rig-east",
+  sourceId: "game-state",
+  sequence: 1,
+  preset: "worry",
+  features: {
+    browInnerRaise: 0.8,
+    jawOpen: 0.15,
+  },
+});
+
+window.FacialRig.control({
+  tag: "trigger",
+  rigId: "avatar-rig-east",
+  sourceId: "game-state",
+  sequence: 2,
+  gesture: "laugh",
+  intensity: 0.75,
+});
+
+window.FacialRig.control({
+  tag: "release",
+  rigId: "avatar-rig-east",
+  sourceId: "game-state",
+  sequence: 3,
+});
+```
+
+Presets are `neutral`, `focused`, `smile`, `sad`, `worry`, `mad`, and `surprised`. Feature values
+are finite numbers from 0 to 1 for `browInnerRaise`, `browLower`, `eyeWiden`, `eyeSquint`,
+`cheekRaise`, `mouthCornerLift`, `mouthCornerDrop`, and `jawOpen`. Explicit features override their
+preset recipe. Invalid values are rejected rather than clamped.
+
+Receipts report substrate capabilities, applied channels, ignored feature controls, and `full` or
+`degraded` fidelity. Bots support feature pose. Generated humans use supplied artwork and softer
+layer motion. Photos use tint and outline only. Reduced motion applies final artwork, tint, and
+static pose without rhythmic or spatial motion. A `laugh` gesture does not play sound; call `play()`
+separately when audio is wanted.
 
 ### Consumer-tunable CSS variables
 

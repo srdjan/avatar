@@ -2,18 +2,39 @@ import {
   audioEnded,
   type AudioRequest,
   audioStarted,
+  compileRigControlPose,
   decideAudio,
   finiteClamp,
   initialAudioPolicy,
+  initialRigControlState,
   initialRigState,
+  type ParsedRigControlCommand,
+  parseRigControlCommand,
   type ReactionPayload,
+  reduceRigControl,
   reduceRigSync,
+  type RigControlEffect,
+  type RigControlState,
   type RigEffect,
   type RigKind,
   type RigProtocol,
   type RigState,
   seedRigState,
 } from "./runtime_core.ts";
+import type {
+  FacialRigApi,
+  RigControlArtwork,
+  RigControlCapabilities,
+  RigControlCapability,
+  RigControlCommand,
+  RigControlFeature,
+  RigControlFeatureValues,
+  RigControlPreset,
+  RigControlReceipt,
+  RigControlRejectionReason,
+} from "../types.ts";
+
+export type { FacialRigApi } from "../types.ts";
 
 type FrameSchedule =
   | Readonly<{ tag: "stopped" }>
@@ -66,15 +87,6 @@ type FacialRigConfig = Readonly<{
   isAudioEnabled: () => boolean;
 }>;
 
-export type FacialRigApi = Readonly<{
-  init(config?: Readonly<Record<string, unknown>>): void;
-  prepareSwap(fragment: ParentNode): void;
-  sync(): void;
-  play(request: Readonly<Record<string, unknown>>): void;
-  startSpeaking(rigId: string, cue: string, durationMs: number): void;
-  stopSpeaking(rigId: string): void;
-}>;
-
 type RigTimers = {
   macroStart?: number;
   macroEnd?: number;
@@ -82,6 +94,9 @@ type RigTimers = {
   speechFrame?: number;
   speechEnd?: number;
   speechClear?: number;
+  controlCleanup?: number;
+  gestureFrame?: number;
+  gestureEnd?: number;
 };
 
 const MOTION_CLASSES = ["motion-pop", "motion-shake", "motion-sink"] as const;
@@ -157,9 +172,16 @@ const MICRO_POSES: Readonly<Record<string, Readonly<Record<string, string>>>> = 
 
 export function createFacialRigRuntime(capabilities: BrowserCapabilities): FacialRigApi {
   const rigStatesById = new Map<string, RigState>();
+  const rigElementsById = new Map<string, HTMLElement>();
+  const controlStatesById = new Map<string, RigControlState>();
+  const pendingControlById = new Map<
+    string,
+    Extract<ParsedRigControlCommand, { tag: "set" }>
+  >();
   const rigTimers = new WeakMap<HTMLElement, RigTimers>();
   const blinkTimers = new WeakMap<HTMLElement, number>();
   let frame: FrameSchedule = { tag: "stopped" };
+  let controlFrame: FrameSchedule = { tag: "stopped" };
   let audioPolicy = initialAudioPolicy();
   let audioContext: AudioContextLike | null = null;
   let initialized = false;
@@ -195,7 +217,7 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
   function clearTimer(timers: RigTimers, key: keyof RigTimers): void {
     const timerId = timers[key];
     if (timerId === undefined) return;
-    if (key === "speechFrame") capabilities.cancelFrame(timerId);
+    if (key === "speechFrame" || key === "gestureFrame") capabilities.cancelFrame(timerId);
     else capabilities.clearTimer(timerId);
     delete timers[key];
   }
@@ -319,6 +341,7 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
 
   function syncRig(rig: HTMLElement): void {
     if (rig.id === "") return;
+    rigElementsById.set(rig.id, rig);
     const protocol = readProtocol(rig);
     const current = rigStatesById.get(rig.id);
     if (current === undefined) {
@@ -329,24 +352,26 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
     }
     const transition = reduceRigSync(current, protocol);
     rigStatesById.set(rig.id, transition.state);
-    for (const effect of transition.effects) interpret(rig, effect);
+    transition.effects.forEach((effect) => interpret(rig, effect));
     if (canAnimate() && rigKind(rig) !== "human-photo") applyIdlePose(rig, capabilities.now());
     startBlinkLoop(rig);
   }
 
   function sync(): void {
     const rigs = [...capabilities.document.querySelectorAll<HTMLElement>(".avatar-rig")];
-    for (const rig of rigs) syncRig(rig);
+    pruneRigState(rigs);
+    rigs.forEach(syncRig);
     startAutonomousIdleLoop(rigs.some(isAnimatedRig));
   }
 
-  function prepareSwap(fragment: ParentNode): void {
-    if (fragment === null || typeof fragment.querySelectorAll !== "function") return;
-    for (const incoming of fragment.querySelectorAll<HTMLElement>(".avatar-rig[id]")) {
+  function prepareSwap(fragment: unknown): void {
+    const queryRoot = fragment as ParentNode | null;
+    if (queryRoot === null || typeof queryRoot.querySelectorAll !== "function") return;
+    for (const incoming of queryRoot.querySelectorAll<HTMLElement>(".avatar-rig[id]")) {
       const live = capabilities.document.getElementById(incoming.id);
       if (!(live instanceof HTMLElement) || !live.classList.contains("avatar-rig")) continue;
       if (!sameRigSignature(live, incoming)) {
-        clearRigTimers(live);
+        clearRigResources(live);
         live.replaceWith(incoming.cloneNode(true));
         continue;
       }
@@ -368,10 +393,347 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
     }
   }
 
+  function control(input: RigControlCommand): RigControlReceipt {
+    const parsed = parseRigControlCommand(input);
+    if (parsed.tag === "rejected") return rejectedControlReceipt(parsed.reason, input);
+    const command = parsed.command;
+    const rig = capabilities.document.getElementById(command.rigId);
+    if (
+      !(rig instanceof HTMLElement) || !rig.classList.contains("avatar-rig") ||
+      rigKind(rig) === "unknown"
+    ) {
+      return rejectedControlReceipt("rig-not-found", command);
+    }
+    rigElementsById.set(rig.id, rig);
+    const transition = reduceRigControl(
+      controlStatesById.get(rig.id) ?? initialRigControlState(),
+      command,
+    );
+    if (transition.decision.tag === "rejected") {
+      return rejectedControlReceipt(transition.decision.reason, command);
+    }
+    controlStatesById.set(rig.id, transition.state);
+    transition.effects.forEach((effect) => interpretControl(rig, effect));
+    return acceptedControlReceipt(rig, command);
+  }
+
+  function interpretControl(rig: HTMLElement, effect: RigControlEffect): void {
+    switch (effect.tag) {
+      case "set-affect":
+        pendingControlById.set(rig.id, effect.command);
+        scheduleControlFrame();
+        return;
+      case "trigger-gesture":
+        pendingControlById.delete(rig.id);
+        startControlGesture(rig, effect.command);
+        return;
+      case "release-affect":
+        pendingControlById.delete(rig.id);
+        clearControlVisual(rig, scaledControlDuration(rig, effect.transitionMs));
+        return;
+    }
+  }
+
+  function scheduleControlFrame(): void {
+    if (capabilities.document.visibilityState === "hidden" || controlFrame.tag === "scheduled") {
+      return;
+    }
+    controlFrame = {
+      tag: "scheduled",
+      frameId: capabilities.requestFrame(flushControlFrame),
+    };
+  }
+
+  function flushControlFrame(): void {
+    controlFrame = { tag: "stopped" };
+    const pending = [...pendingControlById.entries()];
+    pendingControlById.clear();
+    for (const [rigId, command] of pending) {
+      const rig = capabilities.document.getElementById(rigId);
+      if (!(rig instanceof HTMLElement) || !rig.classList.contains("avatar-rig")) continue;
+      if (rig.classList.contains("is-control-gesturing")) continue;
+      applyControlSet(rig, command);
+    }
+  }
+
+  function applyControlSet(
+    rig: HTMLElement,
+    command: Extract<ParsedRigControlCommand, { tag: "set" }>,
+  ): void {
+    applyControlVisual(
+      rig,
+      command.preset,
+      command.preset,
+      command.features,
+      scaledControlDuration(rig, command.transitionMs),
+    );
+  }
+
+  function applyControlVisual(
+    rig: HTMLElement,
+    artwork: RigControlArtwork,
+    recipe: RigControlPreset,
+    features: RigControlFeatureValues,
+    transitionMs: number,
+  ): void {
+    clearTimer(timersFor(rig), "controlCleanup");
+    rig.classList.remove("is-control-releasing");
+    rig.dataset.controlPreset = artwork;
+    rig.style.setProperty("--control-transition-ms", `${transitionMs}ms`);
+    const pose = compileRigControlPose(recipe, features, reactionAmplitude(rig, 1));
+    rig.style.setProperty(
+      "--control-eyes-transform",
+      `translateY(${formatTransformNumber(pose.eyes.translateY)}px) scaleY(${
+        formatTransformNumber(pose.eyes.scaleY)
+      })`,
+    );
+    rig.style.setProperty(
+      "--control-brows-transform",
+      `translateY(${formatTransformNumber(pose.brows.translateY)}px) scaleY(${
+        formatTransformNumber(pose.brows.scaleY)
+      })`,
+    );
+    rig.style.setProperty(
+      "--control-mouth-transform",
+      `translateY(${formatTransformNumber(pose.mouth.translateY)}px) scaleX(${
+        formatTransformNumber(pose.mouth.scaleX)
+      }) scaleY(${formatTransformNumber(pose.mouth.scaleY)})`,
+    );
+    rig.style.setProperty("--control-layer-x", `${formatTransformNumber(pose.layer.translateX)}px`);
+    rig.style.setProperty("--control-layer-y", `${formatTransformNumber(pose.layer.translateY)}px`);
+    rig.style.setProperty("--control-layer-roll", `${formatTransformNumber(pose.layer.rotate)}deg`);
+    rig.style.setProperty("--control-layer-scale", formatTransformNumber(pose.layer.scale));
+    rig.classList.add("is-control-active");
+    activateControlArtwork(rig, artwork, transitionMs);
+  }
+
+  function activateControlArtwork(
+    rig: HTMLElement,
+    artwork: RigControlArtwork,
+    transitionMs: number,
+  ): void {
+    const template = rig.querySelector<HTMLTemplateElement>(
+      `:scope > template.avatar-control-layer[data-control-layer~="${artwork}"]`,
+    );
+    if (template === null) {
+      rig.classList.remove("has-control-artwork");
+      removeControlLayers(rig);
+      return;
+    }
+    rig.classList.add("has-control-artwork");
+    const current = rig.querySelector<HTMLElement | SVGElement>(
+      ":scope > .avatar-control-expression.is-control-current",
+    );
+    if (current?.dataset.controlPreset === artwork) return;
+    rig.querySelectorAll(":scope > .avatar-control-expression.is-control-outgoing")
+      .forEach((outgoing) => outgoing.remove());
+    if (current !== null) {
+      current.classList.remove("is-control-current");
+      current.classList.add("is-control-outgoing");
+    }
+    const clone = template.content.firstElementChild?.cloneNode(true);
+    if (!(clone instanceof HTMLElement) && !(clone instanceof SVGElement)) return;
+    clone.dataset.controlPreset = artwork;
+    const macro = rig.querySelector(":scope > .avatar-expression");
+    rig.insertBefore(clone, macro);
+    void clone.getBoundingClientRect();
+    clone.classList.add("is-control-current");
+    const timers = timersFor(rig);
+    clearTimer(timers, "controlCleanup");
+    if (current === null) return;
+    if (transitionMs === 0) {
+      current.remove();
+      return;
+    }
+    timers.controlCleanup = capabilities.setTimer(() => {
+      current.remove();
+      delete timers.controlCleanup;
+    }, transitionMs);
+  }
+
+  function startControlGesture(
+    rig: HTMLElement,
+    command: Extract<ParsedRigControlCommand, { tag: "trigger" }>,
+  ): void {
+    const timers = timersFor(rig);
+    clearTimer(timers, "gestureFrame");
+    clearTimer(timers, "gestureEnd");
+    rig.classList.add("is-control-gesturing");
+    const transitionMs = scaledControlDuration(rig, 100);
+    applyControlVisual(rig, "laugh", "smile", {
+      eyeSquint: 0.75,
+      cheekRaise: 0.85,
+      mouthCornerLift: 1,
+      jawOpen: 0.8,
+    }, transitionMs);
+    const durationMs = scaledControlHoldDuration(rig, command.durationMs);
+    const startedAt = capabilities.now();
+    const tick = () => {
+      const state = controlStatesById.get(rig.id);
+      if (state?.gesture?.sequence !== command.sequence || !rig.isConnected) return;
+      const progress = finiteClamp((capabilities.now() - startedAt) / durationMs, 0, 1, 1);
+      const envelope = Math.sin(progress * Math.PI);
+      const beat = Math.abs(Math.sin(progress * Math.PI * 4)) * envelope * command.intensity;
+      rig.style.setProperty("--control-gesture-y", `${(-beat * 2).toFixed(3)}px`);
+      rig.style.setProperty("--control-gesture-scale", (1 + beat * 0.035).toFixed(4));
+      if (progress < 1) timers.gestureFrame = capabilities.requestFrame(tick);
+    };
+    if (canAnimate()) tick();
+    timers.gestureEnd = capabilities.setTimer(
+      () => finishControlGesture(rig, command.sequence),
+      durationMs,
+    );
+  }
+
+  function finishControlGesture(rig: HTMLElement, sequence: number): void {
+    const state = controlStatesById.get(rig.id);
+    if (state?.gesture?.sequence !== sequence) return;
+    const settledState = { ...state, gesture: null };
+    controlStatesById.set(rig.id, settledState);
+    const timers = timersFor(rig);
+    clearTimer(timers, "gestureFrame");
+    clearTimer(timers, "gestureEnd");
+    rig.classList.remove("is-control-gesturing");
+    rig.style.removeProperty("--control-gesture-y");
+    rig.style.removeProperty("--control-gesture-scale");
+    if (settledState.affect === null) clearControlVisual(rig, scaledControlDuration(rig, 100));
+    else applyControlSet(rig, settledState.affect);
+  }
+
+  function clearControlVisual(rig: HTMLElement, transitionMs: number): void {
+    const timers = timersFor(rig);
+    clearTimer(timers, "gestureFrame");
+    clearTimer(timers, "gestureEnd");
+    rig.style.setProperty("--control-transition-ms", `${transitionMs}ms`);
+    rig.classList.remove("is-control-active", "is-control-gesturing");
+    rig.classList.add("is-control-releasing");
+    rig.classList.remove("has-control-artwork");
+    delete rig.dataset.controlPreset;
+    rig.querySelectorAll<HTMLElement | SVGElement>(":scope > .avatar-control-expression")
+      .forEach((layer) => {
+        layer.classList.remove("is-control-current");
+        layer.classList.add("is-control-outgoing");
+      });
+    clearTimer(timers, "controlCleanup");
+    const cleanup = () => {
+      removeControlLayers(rig);
+      clearControlProperties(rig);
+      rig.classList.remove("is-control-releasing");
+      delete timers.controlCleanup;
+    };
+    if (transitionMs === 0) cleanup();
+    else timers.controlCleanup = capabilities.setTimer(cleanup, transitionMs);
+  }
+
+  function removeControlLayers(rig: HTMLElement): void {
+    rig.querySelectorAll(":scope > .avatar-control-expression")
+      .forEach((layer) => layer.remove());
+  }
+
+  function clearControlProperties(rig: HTMLElement): void {
+    [
+      "--control-transition-ms",
+      "--control-eyes-transform",
+      "--control-brows-transform",
+      "--control-mouth-transform",
+      "--control-layer-x",
+      "--control-layer-y",
+      "--control-layer-roll",
+      "--control-layer-scale",
+      "--control-gesture-y",
+      "--control-gesture-scale",
+    ].forEach((property) => rig.style.removeProperty(property));
+  }
+
+  function scaledControlDuration(rig: HTMLElement, durationMs: number): number {
+    if (isIOSCompositorGuard() || isReducedMotion()) return 0;
+    return Math.round(durationMs * controlDurationScale(rig));
+  }
+
+  function scaledControlHoldDuration(rig: HTMLElement, durationMs: number): number {
+    return Math.max(1, Math.round(durationMs * controlDurationScale(rig)));
+  }
+
+  function controlDurationScale(rig: HTMLElement): number {
+    const scale = finiteClamp(
+      readFiniteNumber(rig.dataset.seatDurationScale, 1),
+      0,
+      4,
+      1,
+    );
+    return scale;
+  }
+
+  function acceptedControlReceipt(
+    rig: HTMLElement,
+    command: ParsedRigControlCommand,
+  ): RigControlReceipt {
+    const rigCapabilities = controlCapabilities(rig);
+    const ignoredFeatures = command.tag === "set" && !rigCapabilities.featurePose
+      ? Object.keys(command.features) as RigControlFeature[]
+      : [];
+    const applied = appliedControlCapabilities(command, rigCapabilities);
+    const degraded = [
+      rigKind(rig) === "human-photo",
+      ignoredFeatures.length > 0,
+      ![rigCapabilities.artwork, rigCapabilities.featurePose].includes(true),
+    ].includes(true);
+    const fidelity = degraded ? "degraded" : "full";
+    return {
+      tag: "accepted",
+      fidelity,
+      rigId: command.rigId,
+      sourceId: command.sourceId,
+      sequence: command.sequence,
+      capabilities: rigCapabilities,
+      applied,
+      ignoredFeatures,
+    };
+  }
+
+  function controlCapabilities(rig: HTMLElement): RigControlCapabilities {
+    const kind = rigKind(rig);
+    return {
+      artwork: rig.querySelector(":scope > template.avatar-control-layer") !== null,
+      featurePose: kind === "bot",
+      wrapperMotion: kind !== "human-photo" && kind !== "unknown" && canAnimate(),
+      tint: kind !== "unknown",
+      speech: kind === "bot" || kind === "human-generated",
+    };
+  }
+
+  function appliedControlCapabilities(
+    command: ParsedRigControlCommand,
+    rigCapabilities: RigControlCapabilities,
+  ): RigControlCapability[] {
+    if (command.tag === "release") return [];
+    return (["artwork", "featurePose", "wrapperMotion", "tint"] as const).filter((capability) =>
+      rigCapabilities[capability]
+    );
+  }
+
+  function rejectedControlReceipt(
+    reason: RigControlRejectionReason,
+    input: unknown,
+  ): RigControlReceipt {
+    const record = input !== null && typeof input === "object"
+      ? input as Readonly<Record<string, unknown>>
+      : {};
+    return {
+      tag: "rejected",
+      reason,
+      rigId: typeof record.rigId === "string" ? record.rigId : null,
+      sourceId: typeof record.sourceId === "string" ? record.sourceId : null,
+      sequence: typeof record.sequence === "number" && Number.isSafeInteger(record.sequence)
+        ? record.sequence
+        : null,
+    };
+  }
+
   function startSpeaking(rigId: string, cue: string, durationMs: number): void {
     const rig = capabilities.document.getElementById(rigId);
     if (!(rig instanceof HTMLElement) || rigKind(rig) === "human-photo") return;
-    if (speakingMouths(rig).length === 0) return;
+    if (speakingMouths(rig).length + speakingImages(rig).length === 0) return;
     const timers = timersFor(rig);
     clearTimer(timers, "speechFrame");
     clearTimer(timers, "speechEnd");
@@ -393,8 +755,13 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
       const state = rigStatesById.get(rigId)?.speech;
       if (state?.tag !== "speaking") return;
       const elapsed = capabilities.now() - now;
-      const transform = mouthEnvelope(cue, elapsed);
-      for (const mouth of speakingMouths(currentRig)) mouth.style.transform = transform;
+      const envelope = speechEnvelope(cue, elapsed);
+      speakingMouths(currentRig).forEach((mouth) => {
+        mouth.style.transform = envelope.mouthTransform;
+      });
+      speakingImages(currentRig).forEach((image) => {
+        image.style.scale = envelope.imageScale;
+      });
       timers.speechFrame = capabilities.requestFrame(tick);
     };
     tick();
@@ -407,13 +774,15 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
     clearTimer(timers, "speechFrame");
     clearTimer(timers, "speechEnd");
     clearTimer(timers, "speechClear");
+    speakingImages(rig).forEach((image) => image.style.scale = "1");
     clearSpeakingClasses(rig);
     rigStatesById.set(rigId, {
       ...(rigStatesById.get(rigId) ?? initialRigState()),
       speech: { tag: "fading" },
     });
     timers.speechClear = capabilities.setTimer(() => {
-      for (const mouth of speakingMouths(rig)) mouth.style.removeProperty("transform");
+      speakingMouths(rig).forEach((mouth) => mouth.style.removeProperty("transform"));
+      speakingImages(rig).forEach((image) => image.style.removeProperty("scale"));
       const state = rigStatesById.get(rigId) ?? initialRigState();
       rigStatesById.set(rigId, { ...state, speech: { tag: "silent" } });
       delete timers.speechClear;
@@ -522,13 +891,16 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
         const level = rmsLevel(samples);
         const rig = capabilities.document.getElementById(rigId);
         if (rig instanceof HTMLElement && canAnimate()) {
-          for (const mouth of speakingMouths(rig)) {
+          speakingMouths(rig).forEach((mouth) => {
             mouth.style.transform = `translateY(${(level * 1.5).toFixed(2)}px) scaleY(${
               (
                 1 + level * 2
               ).toFixed(3)
             })`;
-          }
+          });
+          speakingImages(rig).forEach((image) => {
+            image.style.scale = `1 ${(1 + level * 0.08).toFixed(4)}`;
+          });
         }
         frameId = capabilities.requestFrame(sample);
       };
@@ -558,9 +930,9 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
   }
 
   function clearIdleStyles(): void {
-    for (const rig of capabilities.document.querySelectorAll<HTMLElement>(".avatar-rig")) {
-      for (const property of IDLE_PROPERTIES) rig.style.removeProperty(property);
-    }
+    capabilities.document.querySelectorAll<HTMLElement>(".avatar-rig").forEach((rig) => {
+      IDLE_PROPERTIES.forEach((property) => rig.style.removeProperty(property));
+    });
   }
 
   function clearRigTimers(rig: HTMLElement): void {
@@ -568,6 +940,45 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
     if (timers === undefined) return;
     for (const key of Object.keys(timers) as Array<keyof RigTimers>) clearTimer(timers, key);
     rigTimers.delete(rig);
+  }
+
+  function clearRigResources(rig: HTMLElement): void {
+    clearRigTimers(rig);
+    const blinkTimer = blinkTimers.get(rig);
+    if (blinkTimer !== undefined) capabilities.clearTimer(blinkTimer);
+    blinkTimers.delete(rig);
+    if (rig.id !== "") {
+      rigStatesById.delete(rig.id);
+      rigElementsById.delete(rig.id);
+      controlStatesById.delete(rig.id);
+      pendingControlById.delete(rig.id);
+    }
+  }
+
+  function pruneRigState(rigs: ReadonlyArray<HTMLElement>): void {
+    const currentById = new Map(rigs.filter((rig) => rig.id !== "").map((rig) => [rig.id, rig]));
+    for (const [rigId, previous] of rigElementsById) {
+      const current = currentById.get(rigId);
+      if (current === previous) continue;
+      if (current !== undefined && sameRigSignature(previous, current)) {
+        clearRigTimers(previous);
+        const blinkTimer = blinkTimers.get(previous);
+        if (blinkTimer !== undefined) capabilities.clearTimer(blinkTimer);
+        blinkTimers.delete(previous);
+        rigElementsById.set(rigId, current);
+        const controlState = controlStatesById.get(rigId);
+        if (controlState !== undefined) {
+          const restoredState = { ...controlState, gesture: null };
+          controlStatesById.set(rigId, restoredState);
+          if (restoredState.affect !== null) {
+            pendingControlById.set(rigId, restoredState.affect);
+            scheduleControlFrame();
+          }
+        }
+      } else {
+        clearRigResources(previous);
+      }
+    }
   }
 
   function tickAutonomousIdle(time: number): void {
@@ -582,7 +993,7 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
       frame = { tag: "stopped" };
       return;
     }
-    for (const rig of rigs) applyIdlePose(rig, time);
+    rigs.forEach((rig) => applyIdlePose(rig, time));
     frame = { tag: "scheduled", frameId: capabilities.requestFrame(tickAutonomousIdle) };
   }
 
@@ -619,18 +1030,37 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
       if (capabilities.document.visibilityState === "hidden") {
         if (frame.tag === "scheduled") capabilities.cancelFrame(frame.frameId);
         frame = { tag: "stopped" };
+        if (controlFrame.tag === "scheduled") capabilities.cancelFrame(controlFrame.frameId);
+        controlFrame = { tag: "stopped" };
+        pendingControlById.clear();
         clearIdleStyles();
       } else {
+        for (const [rigId, state] of controlStatesById) {
+          if (state.affect !== null) pendingControlById.set(rigId, state.affect);
+        }
+        scheduleControlFrame();
         sync();
       }
     });
     capabilities.matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => {
-      if (isReducedMotion()) clearIdleStyles();
-      else sync();
+      if (isReducedMotion()) {
+        clearIdleStyles();
+        for (const [rigId, state] of controlStatesById) {
+          const rig = capabilities.document.getElementById(rigId);
+          if (!(rig instanceof HTMLElement)) continue;
+          if (state.gesture !== null) {
+            clearTimer(timersFor(rig), "gestureFrame");
+            rig.style.removeProperty("--control-gesture-y");
+            rig.style.removeProperty("--control-gesture-scale");
+            continue;
+          }
+          if (state.affect !== null) applyControlSet(rig, state.affect);
+        }
+      } else sync();
     });
   }
 
-  return { init, prepareSwap, sync, play, startSpeaking, stopSpeaking };
+  return { init, prepareSwap, sync, play, startSpeaking, stopSpeaking, control };
 }
 
 function parseConfig(input: Readonly<Record<string, unknown>>, current: FacialRigConfig) {
@@ -788,7 +1218,17 @@ function applyIdlePose(rig: HTMLElement, now: number): void {
 
 function speakingMouths(rig: HTMLElement): SVGElement[] {
   return [...rig.querySelectorAll<SVGElement>(
-    ".avatar-base .face-mouth, .avatar-expression .face-mouth",
+    ".avatar-base .face-mouth, .avatar-expression .face-mouth, " +
+      ".avatar-control-expression .face-mouth",
+  )];
+}
+
+function speakingImages(rig: HTMLElement): HTMLImageElement[] {
+  return [...rig.querySelectorAll<HTMLImageElement>(
+    ':scope[data-rig-kind="human-generated"] > img.avatar-base, ' +
+      ':scope[data-rig-kind="human-generated"] > img.avatar-expression, ' +
+      ':scope[data-rig-kind="human-generated"] > img.avatar-micro-expression, ' +
+      ':scope[data-rig-kind="human-generated"] > img.avatar-control-expression',
   )];
 }
 
@@ -801,14 +1241,15 @@ function clearSpeakingClasses(rig: HTMLElement): void {
   rig.classList.remove("is-speaking", ...SPEAKING_CLASSES);
 }
 
-function mouthEnvelope(cue: string, elapsed: number): string {
+function speechEnvelope(cue: string, elapsed: number) {
   const amplitude = cue === "laugh" || cue === "challenge" ? 0.28 : cue === "gasp" ? 0.36 : 0.18;
   const wave = Math.abs(Math.sin(elapsed / 42));
-  return `translateY(${(wave * amplitude * 2).toFixed(2)}px) scaleY(${
-    (
-      1 + wave * amplitude
-    ).toFixed(3)
-  })`;
+  return {
+    mouthTransform: `translateY(${(wave * amplitude * 2).toFixed(2)}px) scaleY(${
+      (1 + wave * amplitude).toFixed(3)
+    })`,
+    imageScale: `1 ${(1 + wave * amplitude * 0.08).toFixed(4)}`,
+  };
 }
 
 function rmsLevel(samples: Uint8Array): number {

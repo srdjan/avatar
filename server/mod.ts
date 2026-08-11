@@ -1,4 +1,5 @@
 export { avataaarsPreset } from "./avataaars_preset.ts";
+export { createRigControlBank } from "./control_bank.ts";
 export { decomposeFaceFeatures } from "./decompose.ts";
 export type {
   DecomposeOptions,
@@ -12,6 +13,7 @@ export type { RenderRigInput } from "./render.ts";
 export type {
   ReactionSpec,
   RigBotEmotion,
+  RigControlBank,
   RigExpression,
   RigIntensity,
   RigKind,

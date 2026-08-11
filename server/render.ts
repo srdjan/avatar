@@ -2,7 +2,13 @@
 // substrate: bot and generated-human rigs stack expression layers, while a
 // human photo keeps only wrapper-level tint and motion.
 
-import type { ReactionSpec, RigPersonality } from "../types.ts";
+import {
+  type ReactionSpec,
+  RIG_CONTROL_ARTWORK,
+  type RigControlArtwork,
+  type RigControlBank,
+  type RigPersonality,
+} from "../types.ts";
 
 const SAFE_SVG_ELEMENTS = new Set([
   "circle",
@@ -101,6 +107,7 @@ export type RenderRigInput =
       baseSvg: string;
       expressionSvg: string;
       microSvg: string;
+      controlBank?: Extract<RigControlBank, { rigKind: "bot" }>;
       reactionBotEmotion?: string | null;
       microBotEmotion?: string | null;
     }>
@@ -109,6 +116,7 @@ export type RenderRigInput =
       baseSrc: string;
       expressionSrc: string;
       microSrc: string;
+      controlBank?: Extract<RigControlBank, { rigKind: "human-generated" }>;
       emotion: string | null;
       width?: number;
       height?: number;
@@ -154,7 +162,23 @@ function botLayers(
     id: `avatar-micro-expression-${input.id}`,
     "aria-hidden": "true",
   }, reportRejection);
-  return `${base}${expression}${micro}`;
+  return `${base}${expression}${micro}${botControlBank(input, reportRejection)}`;
+}
+
+function botControlBank(
+  input: Extract<RenderRigInput, { rigKind: "bot" }>,
+  reportRejection: ReportSvgRejection,
+): string {
+  const bank = input.controlBank;
+  if (bank === undefined || bank.rigKind !== "bot") return "";
+  return groupControlArtwork(bank.layers).map((group) => {
+    const layer = inlineSvgAttrs(group.source, {
+      "class": "avatar avatar-rigged avatar-control-expression",
+      "data-control-preset": group.primary,
+      "aria-hidden": "true",
+    }, reportRejection);
+    return `<template class="avatar-control-layer" data-control-layer="${group.aliases}">${layer}</template>`;
+  }).join("");
 }
 
 function humanGeneratedLayers(
@@ -162,7 +186,7 @@ function humanGeneratedLayers(
 ): string {
   const w = input.width ?? 40;
   const h = input.height ?? 40;
-  return `<img class="avatar avatar-base" data-emotion="${esc(input.emotion ?? "")}" ` +
+  const visible = `<img class="avatar avatar-base" data-emotion="${esc(input.emotion ?? "")}" ` +
     `src="${esc(input.baseSrc)}" alt="${esc(input.label)}" width="${w}" height="${h}">` +
     `<img class="avatar avatar-expression" aria-hidden="true" ` +
     `id="avatar-expression-${esc(input.id)}" src="${esc(input.expressionSrc)}" ` +
@@ -170,6 +194,43 @@ function humanGeneratedLayers(
     `<img class="avatar avatar-micro-expression" aria-hidden="true" ` +
     `id="avatar-micro-expression-${esc(input.id)}" src="${esc(input.microSrc)}" ` +
     `alt="" width="${w}" height="${h}">`;
+  return visible + humanGeneratedControlBank(input, w, h);
+}
+
+function humanGeneratedControlBank(
+  input: Extract<RenderRigInput, { rigKind: "human-generated" }>,
+  width: number,
+  height: number,
+): string {
+  const bank = input.controlBank;
+  if (bank === undefined || bank.rigKind !== "human-generated") return "";
+  return groupControlArtwork(bank.layers).map((group) =>
+    `<template class="avatar-control-layer" data-control-layer="${group.aliases}">` +
+    `<img class="avatar avatar-control-expression" data-control-preset="${group.primary}" ` +
+    `aria-hidden="true" src="${esc(group.source)}" alt="" ` +
+    `width="${width}" height="${height}"></template>`
+  ).join("");
+}
+
+type GroupedControlArtwork = Readonly<{
+  source: string;
+  primary: RigControlArtwork;
+  aliases: string;
+}>;
+
+function groupControlArtwork(
+  layers: Readonly<Record<RigControlArtwork, string>>,
+): GroupedControlArtwork[] {
+  const grouped = new Map<string, RigControlArtwork[]>();
+  RIG_CONTROL_ARTWORK.forEach((artwork) => {
+    const source = layers[artwork];
+    grouped.set(source, [...(grouped.get(source) ?? []), artwork]);
+  });
+  return [...grouped].map(([source, artwork]) => ({
+    source,
+    primary: artwork[0] ?? "neutral",
+    aliases: artwork.join(" "),
+  }));
 }
 
 // Photos are not facially decomposed. Reactions stay on the wrapper to avoid
@@ -195,6 +256,7 @@ function rigDataAttrs(input: RenderRigInput): string {
     `data-rig-kind="${input.rigKind}"`,
     `data-rig-signature="${rigSignature(input)}"`,
     `data-seat-audio-probability="${p.audioProbability}"`,
+    `data-seat-duration-scale="${p.durationScale}"`,
     ...reactionDataAttrs("reaction", input.reaction),
     ...reactionDataAttrs("preceding", input.precedingReaction),
     ...reactionDataAttrs("micro", input.microReaction),
@@ -212,12 +274,22 @@ function rigDataAttrs(input: RenderRigInput): string {
 function rigSignature(input: RenderRigInput): string {
   switch (input.rigKind) {
     case "bot":
-      return `bot:${hashString(input.baseSvg)}`;
+      return `bot:${hashString(input.baseSvg)}${controlBankSignature(input.controlBank)}`;
     case "human-generated":
-      return `human-generated:${hashString(input.baseSrc)}`;
+      return `human-generated:${hashString(input.baseSrc)}${
+        controlBankSignature(input.controlBank)
+      }`;
     case "human-photo":
       return `human-photo:${hashString(input.src)}`;
   }
+}
+
+function controlBankSignature(bank: RigControlBank | undefined): string {
+  return bank === undefined ? "" : `:${
+    hashString(
+      RIG_CONTROL_ARTWORK.map((artwork) => bank.layers[artwork]).join(""),
+    )
+  }`;
 }
 
 function hashString(s: string): string {

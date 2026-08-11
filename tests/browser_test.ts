@@ -1,7 +1,13 @@
 import { assertEquals } from "jsr:@std/assert@1.0.14";
-import type { ReactionSpec } from "@srdjan/avatar";
+import type {
+  ReactionSpec,
+  RigControlBank,
+  RigControlCommand,
+  RigControlReceipt,
+} from "@srdjan/avatar";
+import { createAvatarGenerator, RIG_CONTROL_PRESETS } from "@srdjan/avatar";
 import { AVATAR_ASSETS } from "@srdjan/avatar/assets";
-import { renderFacialRig } from "@srdjan/avatar/server";
+import { createRigControlBank, renderFacialRig } from "@srdjan/avatar/server";
 import { type Browser, chromium, type Page } from "npm:playwright@1.60.0";
 
 const FACE_SVG = '<svg viewBox="0 0 112 112">' +
@@ -21,6 +27,7 @@ type FacialRigApi = Readonly<{
   play(request: Readonly<Record<string, unknown>>): void;
   startSpeaking(rigId: string, cue: string, durationMs: number): void;
   stopSpeaking(rigId: string): void;
+  control(command: RigControlCommand): RigControlReceipt;
 }>;
 
 function localPath(url: URL): string {
@@ -98,8 +105,22 @@ function renderBotRig(
     reaction?: ReactionSpec | null;
     precedingReaction?: ReactionSpec | null;
     microReaction?: ReactionSpec | null;
+    controlBank?: boolean;
   }> = {},
 ): string {
+  const controlBank: Extract<RigControlBank, { rigKind: "bot" }> = {
+    rigKind: "bot",
+    layers: {
+      neutral: FACE_SVG,
+      focused: FACE_SVG,
+      smile: FACE_SVG,
+      sad: FACE_SVG,
+      worry: FACE_SVG,
+      mad: FACE_SVG,
+      surprised: FACE_SVG,
+      laugh: FACE_SVG,
+    },
+  };
   return renderFacialRig({
     id: overrides.id ?? "east",
     label: overrides.id ?? "East",
@@ -114,10 +135,692 @@ function renderBotRig(
     baseSvg: overrides.baseSvg ?? FACE_SVG,
     expressionSvg: FACE_SVG,
     microSvg: FACE_SVG,
+    ...(overrides.controlBank === true ? { controlBank } : {}),
     reactionBotEmotion: "happy",
     microBotEmotion: "focused",
   });
 }
+
+Deno.test("external control composes persistent affect, laugh, speech, and release", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(renderBotRig({ id: "controlled", controlBank: true }));
+    await loadFacialRig(page);
+
+    const setResult = await page.evaluate(async () => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      const receipt = api.control({
+        tag: "set",
+        rigId: "avatar-rig-controlled",
+        sourceId: "game-state",
+        sequence: 1,
+        preset: "smile",
+        features: { jawOpen: 0.25 },
+        transitionMs: 0,
+      });
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      const rig = document.querySelector<HTMLElement>("#avatar-rig-controlled")!;
+      const layer = rig.querySelector<HTMLElement>(".avatar-control-expression");
+      return {
+        receipt,
+        active: rig.classList.contains("is-control-active"),
+        preset: rig.dataset.controlPreset,
+        layerPreset: layer?.dataset.controlPreset,
+        layerOpacity: layer === null ? null : getComputedStyle(layer).opacity,
+        mouth: rig.style.getPropertyValue("--control-mouth-transform"),
+      };
+    });
+    assertEquals(setResult, {
+      receipt: {
+        tag: "accepted",
+        fidelity: "full",
+        rigId: "avatar-rig-controlled",
+        sourceId: "game-state",
+        sequence: 1,
+        capabilities: {
+          artwork: true,
+          featurePose: true,
+          wrapperMotion: true,
+          tint: true,
+          speech: true,
+        },
+        applied: ["artwork", "featurePose", "wrapperMotion", "tint"],
+        ignoredFeatures: [],
+      },
+      active: true,
+      preset: "smile",
+      layerPreset: "smile",
+      layerOpacity: "1",
+      mouth: "translateY(-1.3px) scaleX(1.052) scaleY(1.2)",
+    });
+
+    const state = await page.evaluate(async () => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      const stale = api.control({
+        tag: "set",
+        rigId: "avatar-rig-controlled",
+        sourceId: "game-state",
+        sequence: 1,
+        preset: "sad",
+      });
+      const busy = api.control({
+        tag: "set",
+        rigId: "avatar-rig-controlled",
+        sourceId: "camera",
+        sequence: 1,
+        preset: "sad",
+      });
+      api.control({
+        tag: "set",
+        rigId: "avatar-rig-controlled",
+        sourceId: "game-state",
+        sequence: 2,
+        preset: "worry",
+      });
+      await new Promise(requestAnimationFrame);
+      const laugh = api.control({
+        tag: "trigger",
+        rigId: "avatar-rig-controlled",
+        sourceId: "game-state",
+        sequence: 3,
+        gesture: "laugh",
+        intensity: 0.8,
+        durationMs: 100,
+      });
+      api.startSpeaking("avatar-rig-controlled", "laugh", 100);
+      await new Promise(requestAnimationFrame);
+      const rig = document.querySelector<HTMLElement>("#avatar-rig-controlled")!;
+      const during = {
+        gesturing: rig.classList.contains("is-control-gesturing"),
+        preset: rig.querySelector<HTMLElement>(
+          ".avatar-control-expression.is-control-current",
+        )?.dataset.controlPreset,
+        speakingMouth: rig.querySelector<SVGElement>(
+          ".avatar-control-expression.is-control-current .face-mouth",
+        )?.style.transform ?? "",
+      };
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      const settledPreset = rig.querySelector<HTMLElement>(
+        ".avatar-control-expression.is-control-current",
+      )?.dataset.controlPreset;
+      const release = api.control({
+        tag: "release",
+        rigId: "avatar-rig-controlled",
+        sourceId: "game-state",
+        sequence: 4,
+        transitionMs: 80,
+      });
+      const releaseTransition = rig.style.getPropertyValue("--control-transition-ms");
+      const nextOwner = api.control({
+        tag: "set",
+        rigId: "avatar-rig-controlled",
+        sourceId: "camera",
+        sequence: 2,
+        preset: "focused",
+        transitionMs: 0,
+      });
+      await new Promise(requestAnimationFrame);
+      return {
+        stale,
+        busyReason: busy.tag === "rejected" ? busy.reason : null,
+        laugh,
+        during,
+        settledPreset,
+        release,
+        releaseTransition,
+        nextOwner: nextOwner.tag,
+        releasingAfterSet: rig.classList.contains("is-control-releasing"),
+        finalPreset: rig.dataset.controlPreset,
+      };
+    });
+    assertEquals(state.stale, {
+      tag: "rejected",
+      reason: "stale-sequence",
+      rigId: "avatar-rig-controlled",
+      sourceId: "game-state",
+      sequence: 1,
+    });
+    assertEquals(state.busyReason, "source-busy");
+    assertEquals(state.laugh.tag, "accepted");
+    assertEquals(state.during.gesturing, true);
+    assertEquals(state.during.preset, "laugh");
+    assertEquals(state.during.speakingMouth !== "", true);
+    assertEquals(state.settledPreset, "worry");
+    assertEquals(state.release.tag, "accepted");
+    assertEquals(state.releaseTransition, "80ms");
+    assertEquals(state.nextOwner, "accepted");
+    assertEquals(state.releasingAfterSet, false);
+    assertEquals(state.finalPreset, "focused");
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("continuous control keeps only the freshest set before paint", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(renderBotRig({ id: "mailbox", controlBank: true }));
+    await loadFacialRig(page);
+    const result = await page.evaluate(async () => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      const presets = ["smile", "sad", "worry", "mad", "surprised"] as const;
+      const receipts = Array.from({ length: 100 }, (_, index) =>
+        api.control({
+          tag: "set",
+          rigId: "avatar-rig-mailbox",
+          sourceId: "stream",
+          sequence: index + 1,
+          preset: presets[index % presets.length]!,
+          transitionMs: 0,
+        }));
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      const rig = document.querySelector<HTMLElement>("#avatar-rig-mailbox")!;
+      return {
+        accepted: receipts.every((receipt) => receipt.tag === "accepted"),
+        preset: rig.dataset.controlPreset,
+        layers: rig.querySelectorAll(":scope > .avatar-control-expression").length,
+      };
+    });
+    assertEquals(result, { accepted: true, preset: "surprised", layers: 1 });
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("bankless rigs remain visible under set and trigger control", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const image = "data:image/svg+xml," + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="%23d8c4a2"/></svg>',
+    );
+    const generated = renderFacialRig({
+      id: "bankless-generated",
+      label: "Bankless generated",
+      reaction: null,
+      precedingReaction: null,
+      microReaction: null,
+      personality: PERSONALITY,
+      rigKind: "human-generated",
+      baseSrc: image,
+      expressionSrc: image,
+      microSrc: image,
+      emotion: null,
+    });
+    await page.setContent(renderBotRig({ id: "bankless-bot" }) + generated);
+    await loadFacialRig(page);
+    const result = await page.evaluate(async () => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      api.control({
+        tag: "set",
+        rigId: "avatar-rig-bankless-bot",
+        sourceId: "director",
+        sequence: 1,
+        preset: "smile",
+        transitionMs: 0,
+      });
+      api.control({
+        tag: "trigger",
+        rigId: "avatar-rig-bankless-generated",
+        sourceId: "director",
+        sequence: 1,
+        gesture: "laugh",
+        durationMs: 500,
+      });
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      return ["bankless-bot", "bankless-generated"].map((id) => {
+        const rig = document.querySelector<HTMLElement>(`#avatar-rig-${id}`)!;
+        return {
+          id,
+          baseOpacity: getComputedStyle(rig.querySelector(".avatar-base")!).opacity,
+          controlLayers: rig.querySelectorAll(":scope > .avatar-control-expression").length,
+          preset: rig.dataset.controlPreset,
+        };
+      });
+    });
+    assertEquals(result, [
+      { id: "bankless-bot", baseOpacity: "1", controlLayers: 0, preset: "smile" },
+      { id: "bankless-generated", baseOpacity: "1", controlLayers: 0, preset: "laugh" },
+    ]);
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("control reports substrate capability degradation and boundary failures", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const image = "data:image/svg+xml," + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="%23d8c4a2"/></svg>',
+    );
+    const generatedBank: Extract<RigControlBank, { rigKind: "human-generated" }> = {
+      rigKind: "human-generated",
+      layers: {
+        neutral: image,
+        focused: image,
+        smile: image,
+        sad: image,
+        worry: image,
+        mad: image,
+        surprised: image,
+        laugh: image,
+      },
+    };
+    const generated = renderFacialRig({
+      id: "generated-control",
+      label: "Generated",
+      reaction: null,
+      precedingReaction: null,
+      microReaction: null,
+      personality: PERSONALITY,
+      rigKind: "human-generated",
+      baseSrc: image,
+      expressionSrc: image,
+      microSrc: image,
+      emotion: null,
+      controlBank: generatedBank,
+    });
+    const photo = renderFacialRig({
+      id: "photo-control",
+      label: "Photo",
+      reaction: null,
+      precedingReaction: null,
+      microReaction: null,
+      personality: PERSONALITY,
+      rigKind: "human-photo",
+      src: image,
+      emotion: null,
+    });
+    const unknown = '<span id="avatar-rig-unknown-control" class="avatar-rig" ' +
+      'data-rig-kind="unknown"><img class="avatar avatar-base" alt="Unknown"></span>';
+    await page.setContent(renderBotRig({ id: "bot-control" }) + generated + photo + unknown);
+    await loadFacialRig(page);
+    const result = await page.evaluate(async () => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      const generatedReceipt = api.control({
+        tag: "set",
+        rigId: "avatar-rig-generated-control",
+        sourceId: "operator",
+        sequence: 1,
+        preset: "sad",
+        features: { jawOpen: 0.4 },
+        transitionMs: 0,
+      });
+      const photoReceipt = api.control({
+        tag: "set",
+        rigId: "avatar-rig-photo-control",
+        sourceId: "operator",
+        sequence: 1,
+        preset: "mad",
+        transitionMs: 0,
+      });
+      const invalid = (api.control as unknown as (input: unknown) => RigControlReceipt)({
+        tag: "set",
+        rigId: "avatar-rig-bot-control",
+        sourceId: "operator",
+        sequence: 1,
+        preset: "smile",
+        features: { jawOpen: 2 },
+      });
+      const missing = api.control({
+        tag: "set",
+        rigId: "avatar-rig-missing",
+        sourceId: "operator",
+        sequence: 1,
+        preset: "smile",
+      });
+      const unknown = api.control({
+        tag: "set",
+        rigId: "avatar-rig-unknown-control",
+        sourceId: "operator",
+        sequence: 1,
+        preset: "smile",
+      });
+      await new Promise(requestAnimationFrame);
+      api.startSpeaking("avatar-rig-generated-control", "laugh", 400);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      const generatedRig = document.querySelector<HTMLElement>(
+        "#avatar-rig-generated-control",
+      )!;
+      const photoRig = document.querySelector<HTMLElement>("#avatar-rig-photo-control")!;
+      const generatedLayer = generatedRig.querySelector<HTMLImageElement>(
+        ":scope > .avatar-control-expression.is-control-current",
+      );
+      const generatedSpeech = {
+        speaking: generatedRig.classList.contains("is-speaking"),
+        moved: generatedLayer?.style.scale !== "" && generatedLayer?.style.scale !== "1",
+      };
+      api.stopSpeaking(generatedRig.id);
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      return {
+        generatedReceipt,
+        photoReceipt,
+        invalidReason: invalid.tag === "rejected" ? invalid.reason : null,
+        missingReason: missing.tag === "rejected" ? missing.reason : null,
+        unknownReason: unknown.tag === "rejected" ? unknown.reason : null,
+        generatedPreset: generatedRig.dataset.controlPreset,
+        generatedLayers: generatedRig.querySelectorAll(
+          ":scope > .avatar-control-expression.is-control-current",
+        ).length,
+        generatedSpeech,
+        generatedSpeechCleared: generatedLayer?.style.scale === "" &&
+          !generatedRig.classList.contains("is-speaking"),
+        photoPreset: photoRig.dataset.controlPreset,
+        photoOutline: getComputedStyle(photoRig.querySelector(".avatar-base")!).outlineStyle,
+      };
+    });
+    assertEquals(result.generatedReceipt, {
+      tag: "accepted",
+      fidelity: "degraded",
+      rigId: "avatar-rig-generated-control",
+      sourceId: "operator",
+      sequence: 1,
+      capabilities: {
+        artwork: true,
+        featurePose: false,
+        wrapperMotion: true,
+        tint: true,
+        speech: true,
+      },
+      applied: ["artwork", "wrapperMotion", "tint"],
+      ignoredFeatures: ["jawOpen"],
+    });
+    assertEquals(result.photoReceipt, {
+      tag: "accepted",
+      fidelity: "degraded",
+      rigId: "avatar-rig-photo-control",
+      sourceId: "operator",
+      sequence: 1,
+      capabilities: {
+        artwork: false,
+        featurePose: false,
+        wrapperMotion: false,
+        tint: true,
+        speech: false,
+      },
+      applied: ["tint"],
+      ignoredFeatures: [],
+    });
+    assertEquals(result.invalidReason, "invalid-command");
+    assertEquals(result.missingReason, "rig-not-found");
+    assertEquals(result.unknownReason, "rig-not-found");
+    assertEquals(result.generatedPreset, "sad");
+    assertEquals(result.generatedLayers, 1);
+    assertEquals(result.generatedSpeech, { speaking: true, moved: true });
+    assertEquals(result.generatedSpeechCleared, true);
+    assertEquals(result.photoPreset, "mad");
+    assertEquals(result.photoOutline, "solid");
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("control state survives matching swaps and clears on changed signatures", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(renderBotRig({ id: "control-swap", controlBank: true }));
+    await loadFacialRig(page);
+    const result = await page.evaluate(async ({ matching, changed }) => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      api.control({
+        tag: "set",
+        rigId: "avatar-rig-control-swap",
+        sourceId: "game-state",
+        sequence: 1,
+        preset: "smile",
+        transitionMs: 0,
+      });
+      await new Promise(requestAnimationFrame);
+      const matchingTemplate = document.createElement("template");
+      matchingTemplate.innerHTML = matching;
+      api.prepareSwap(matchingTemplate.content);
+      api.sync();
+      const live = document.querySelector<HTMLElement>("#avatar-rig-control-swap")!;
+      const preserved = {
+        preset: live.dataset.controlPreset,
+        layer: live.querySelector<HTMLElement>(
+          ".avatar-control-expression.is-control-current",
+        )?.dataset.controlPreset,
+      };
+      const changedTemplate = document.createElement("template");
+      changedTemplate.innerHTML = changed;
+      api.prepareSwap(changedTemplate.content);
+      api.sync();
+      const next = api.control({
+        tag: "set",
+        rigId: "avatar-rig-control-swap",
+        sourceId: "camera",
+        sequence: 1,
+        preset: "focused",
+        transitionMs: 0,
+      });
+      await new Promise(requestAnimationFrame);
+      return {
+        preserved,
+        next: next.tag,
+        finalPreset: document.querySelector<HTMLElement>("#avatar-rig-control-swap")?.dataset
+          .controlPreset,
+      };
+    }, {
+      matching: renderBotRig({ id: "control-swap", controlBank: true }),
+      changed: renderBotRig({
+        id: "control-swap",
+        controlBank: true,
+        baseSvg: FACE_SVG.replace("<svg ", '<svg data-version="2" '),
+      }),
+    });
+    assertEquals(result, {
+      preserved: { preset: "smile", layer: "smile" },
+      next: "accepted",
+      finalPreset: "focused",
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("persistent control restores across a direct same-signature replacement", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const html = renderBotRig({ id: "control-direct-swap", controlBank: true });
+    await page.setContent(html);
+    await loadFacialRig(page);
+    const result = await page.evaluate(async (replacement) => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      api.control({
+        tag: "set",
+        rigId: "avatar-rig-control-direct-swap",
+        sourceId: "director",
+        sequence: 1,
+        preset: "smile",
+        transitionMs: 0,
+      });
+      await new Promise(requestAnimationFrame);
+      const template = document.createElement("template");
+      template.innerHTML = replacement;
+      document.querySelector("#avatar-rig-control-direct-swap")?.replaceWith(template.content);
+      api.sync();
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      const rig = document.querySelector<HTMLElement>("#avatar-rig-control-direct-swap")!;
+      const stale = api.control({
+        tag: "set",
+        rigId: rig.id,
+        sourceId: "director",
+        sequence: 1,
+        preset: "sad",
+      });
+      const busy = api.control({
+        tag: "set",
+        rigId: rig.id,
+        sourceId: "camera",
+        sequence: 1,
+        preset: "worry",
+      });
+      return {
+        preset: rig.dataset.controlPreset,
+        artwork: rig.querySelector<HTMLElement>(
+          ":scope > .avatar-control-expression.is-control-current",
+        )?.dataset.controlPreset,
+        stale: stale.tag === "rejected" ? stale.reason : null,
+        busy: busy.tag === "rejected" ? busy.reason : null,
+      };
+    }, html);
+    assertEquals(result, {
+      preset: "smile",
+      artwork: "smile",
+      stale: "stale-sequence",
+      busy: "source-busy",
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("control lane priority and reduced motion preserve the final signal", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(renderBotRig({ id: "lanes", controlBank: true }));
+    await loadFacialRig(page);
+    const animated = await page.evaluate(
+      async (reactionHtml) => {
+        const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+        const rig = document.querySelector<HTMLElement>("#avatar-rig-lanes")!;
+        api.control({
+          tag: "set",
+          rigId: rig.id,
+          sourceId: "director",
+          sequence: 1,
+          preset: "worry",
+          transitionMs: 0,
+        });
+        await new Promise(requestAnimationFrame);
+        const template = document.createElement("template");
+        template.innerHTML = reactionHtml;
+        api.prepareSwap(template.content);
+        api.sync();
+        let voiceEvents = 0;
+        rig.addEventListener("facial-rig:voice-cue", () => voiceEvents++);
+        api.control({
+          tag: "trigger",
+          rigId: rig.id,
+          sourceId: "director",
+          sequence: 2,
+          gesture: "laugh",
+          durationMs: 100,
+        });
+        const duringGesture = {
+          macro: getComputedStyle(rig.querySelector(".avatar-expression")!).opacity,
+          control: getComputedStyle(
+            rig.querySelector(".avatar-control-expression.is-control-current")!,
+          ).opacity,
+          zIndex: getComputedStyle(
+            rig.querySelector(".avatar-control-expression.is-control-current")!,
+          ).zIndex,
+        };
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const duringMacro = {
+          reacting: rig.classList.contains("is-reacting"),
+          control: getComputedStyle(
+            rig.querySelector(".avatar-control-expression.is-control-current")!,
+          ).opacity,
+        };
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return {
+          duringGesture,
+          duringMacro,
+          settled: {
+            reacting: rig.classList.contains("is-reacting"),
+            control: getComputedStyle(
+              rig.querySelector(".avatar-control-expression.is-control-current")!,
+            ).opacity,
+            preset: rig.dataset.controlPreset,
+          },
+          voiceEvents,
+        };
+      },
+      renderBotRig({
+        id: "lanes",
+        controlBank: true,
+        reaction: reaction(1, { durationMs: 400 }),
+      }),
+    );
+    assertEquals(animated, {
+      duringGesture: { macro: "1", control: "1", zIndex: "5" },
+      duringMacro: { reacting: true, control: "0" },
+      settled: { reacting: false, control: "1", preset: "worry" },
+      voiceEvents: 0,
+    });
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const reduced = await page.evaluate(async () => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      const rig = document.querySelector<HTMLElement>("#avatar-rig-lanes")!;
+      api.control({
+        tag: "release",
+        rigId: rig.id,
+        sourceId: "director",
+        sequence: 3,
+        transitionMs: 0,
+      });
+      const receipt = api.control({
+        tag: "set",
+        rigId: rig.id,
+        sourceId: "director",
+        sequence: 4,
+        preset: "smile",
+      });
+      await new Promise(requestAnimationFrame);
+      const trigger = api.control({
+        tag: "trigger",
+        rigId: rig.id,
+        sourceId: "director",
+        sequence: 5,
+        gesture: "laugh",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        receipt,
+        trigger: trigger.tag,
+        preset: rig.dataset.controlPreset,
+        transition: rig.style.getPropertyValue("--control-transition-ms"),
+        gestureWrite: rig.style.getPropertyValue("--control-gesture-y"),
+        layerOpacity: getComputedStyle(
+          rig.querySelector(".avatar-control-expression.is-control-current")!,
+        ).opacity,
+      };
+    });
+    assertEquals(reduced.receipt.tag, "accepted");
+    if (reduced.receipt.tag === "accepted") {
+      assertEquals(reduced.receipt.capabilities.wrapperMotion, false);
+      assertEquals(reduced.receipt.applied, ["artwork", "featurePose", "tint"]);
+    }
+    assertEquals({
+      trigger: reduced.trigger,
+      preset: reduced.preset,
+      transition: reduced.transition,
+      gestureWrite: reduced.gestureWrite,
+      layerOpacity: reduced.layerOpacity,
+    }, {
+      trigger: "accepted",
+      preset: "laugh",
+      transition: "0ms",
+      gestureWrite: "",
+      layerOpacity: "1",
+    });
+  } finally {
+    await browser.close();
+  }
+});
 
 async function loadFacialRig(page: Page): Promise<void> {
   await page.addStyleTag({ path: localPath(AVATAR_ASSETS.facialRigStyles.url) });
@@ -224,6 +927,12 @@ Deno.test("browser runtime animates an AI turn rig without consumer coupling", a
     `);
     const globalsBefore = await page.evaluate(() => Object.getOwnPropertyNames(window));
     await page.addScriptTag({ path: localPath(AVATAR_ASSETS.facialRigScript.url) });
+    assertEquals(
+      await page.evaluate(() =>
+        Object.keys((window as unknown as { FacialRig: FacialRigApi }).FacialRig).sort()
+      ),
+      ["control", "init", "play", "prepareSwap", "startSpeaking", "stopSpeaking", "sync"],
+    );
     assertEquals(
       await page.evaluate(
         (before) => Object.getOwnPropertyNames(window).filter((name) => !before.includes(name)),
@@ -1682,10 +2391,19 @@ Deno.test("iPhone idle mode performs no style-attribute churn", async () => {
       </span>
     `);
     await page.addScriptTag({ path: localPath(AVATAR_ASSETS.facialRigScript.url) });
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const api = (window as unknown as { FacialRig: { init(): void; sync(): void } }).FacialRig;
       api.init();
       api.sync();
+
+      (api as unknown as FacialRigApi).control({
+        tag: "set",
+        rigId: "avatar-rig-ios",
+        sourceId: "game-state",
+        sequence: 1,
+        preset: "smile",
+      });
+      await new Promise(requestAnimationFrame);
 
       const rig = document.querySelector("#avatar-rig-ios")!;
       const observer = new MutationObserver((records) => {
@@ -1763,6 +2481,68 @@ Deno.test("computed style oracle pins motion, crossfade, and reduced-motion beha
       planeTransform: "none",
       expressionAnimationName: "none",
     });
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("controlled preset contact sheet stays visually deterministic at DPR 2", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 360, height: 180 },
+      deviceScaleFactor: 2,
+    });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const avatar = createAvatarGenerator().forBot("mason-steady");
+    assertEquals(avatar.kind, "bot");
+    if (avatar.kind !== "bot") return;
+    const bank = createRigControlBank(avatar);
+    const rigs = RIG_CONTROL_PRESETS.map((preset) =>
+      renderFacialRig({
+        id: `visual-${preset}`,
+        label: preset,
+        reaction: null,
+        precedingReaction: null,
+        microReaction: null,
+        personality: { amplitudeScale: 1, durationScale: 1, audioProbability: 0 },
+        rigKind: "bot",
+        baseSvg: avatar.src,
+        expressionSvg: avatar.emotions.focused,
+        microSvg: avatar.emotions.focused,
+        controlBank: bank,
+      })
+    ).join("");
+    await page.setContent(
+      `<style>` +
+        `html,body{margin:0;background:#0f1413}` +
+        `#sheet{display:grid;grid-template-columns:repeat(7,40px);gap:8px;padding:12px;` +
+        `width:max-content;background:#0f1413}` +
+        `.avatar-rig,.avatar{width:40px;height:40px}` +
+        `.avatar-rig,.avatar-rig *{animation:none!important;transition:none!important}` +
+        `</style><div id="sheet">${rigs}</div>`,
+    );
+    await loadFacialRig(page);
+    await page.evaluate((presets) => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      presets.forEach((preset, index) =>
+        api.control({
+          tag: "set",
+          rigId: `avatar-rig-visual-${preset}`,
+          sourceId: "contact-sheet",
+          sequence: index + 1,
+          preset,
+          transitionMs: 0,
+        })
+      );
+    }, RIG_CONTROL_PRESETS);
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    const screenshot = await page.locator("#sheet").screenshot({ animations: "disabled" });
+    const digest = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", Uint8Array.from(screenshot)),
+    );
+    const hash = Array.from(digest).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    assertEquals(hash, "b034b11e89c78a74fd7a7a5c3d58b75a42ecec2e00b8d1c12c460c24faa0bee4");
   } finally {
     await browser.close();
   }
