@@ -406,8 +406,9 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
       ] as const;
       idleActions[Number([canAnimate(), rigKind(rig) !== "human-photo"].every(Boolean))]!();
       startBlinkLoop(rig);
-    } catch {
+    } catch (reason) {
       // Invalid rendered protocol is ignored without mutating the live rig.
+      ignoreBrowserFailure(reason);
     }
   }
 
@@ -479,8 +480,9 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
         activeRig.replaceWith(incoming.cloneNode(true));
       };
       [changedSignature, matchingSignature][Number(sameRigSignature(activeRig, incoming))]!();
-    } catch {
+    } catch (reason) {
       // Invalid or stale incoming rigs are left for the normal swap path.
+      ignoreBrowserFailure(reason);
     }
   }
 
@@ -496,8 +498,9 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
       const validConfig = activeConfig as FacialRigConfig;
       (queryRoot as ParentNode).querySelectorAll<HTMLElement>(".avatar-rig[id]")
         .forEach((incoming) => prepareIncomingSwap(incoming, validConfig));
-    } catch {
+    } catch (reason) {
       // Non-fragment inputs and calls before initialization are ignored.
+      ignoreBrowserFailure(reason);
     }
   }
 
@@ -1096,8 +1099,9 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
         if (context?.state === "suspended") {
           try {
             void Promise.resolve(context.resume()).catch(() => undefined);
-          } catch {
+          } catch (reason) {
             // Browser unlock failures are device policy, not application failures.
+            ignoreBrowserFailure(reason);
           }
         }
         const silenceSrc = config?.silenceSrc ?? "";
@@ -1111,8 +1115,9 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
           if (playing !== undefined) {
             void Promise.resolve(playing).catch(() => safely(() => silence.pause()));
           }
-        } catch {
+        } catch (reason) {
           // Silence priming is best effort and never gates reactions.
+          ignoreBrowserFailure(reason);
         }
       }, { once: true });
       gestureInstalled = true;
@@ -1500,9 +1505,14 @@ function speechCueForSemantic(family: AudioRequest["family"]): string {
 function safely(effect: () => void): void {
   try {
     effect();
-  } catch {
+  } catch (reason) {
     // Browser media teardown is best effort.
+    ignoreBrowserFailure(reason);
   }
+}
+
+function ignoreBrowserFailure(_reason: unknown): void {
+  return;
 }
 
 function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {

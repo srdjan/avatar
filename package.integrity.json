@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "SHA-256",
+  "files": [
+    {
+      "path": "assets/mod.ts",
+      "sha256": "28064e0255e317e17a7a04e1cb90ec9fc5c3e1a99672cdfe620cd969bcb3634d"
+    },
+    {
+      "path": "assets/private/audio/haha.mp3",
+      "sha256": "838c4863398dba33f794faf5a640d592fa577e420a57114ef7d113d146532ca2"
+    },
+    {
+      "path": "assets/private/audio/hahaha.mp3",
+      "sha256": "20351581b4b41bb7ed9eae615793598d9140c7202a5557f548d7d903aedb72cc"
+    },
+    {
+      "path": "assets/private/audio/nenene.mp3",
+      "sha256": "f218486f54ad12c226d31bbc065251bb6187e2fbdd08c60db040eb075c193bc3"
+    },
+    {
+      "path": "assets/private/audio/opa.mp3",
+      "sha256": "e6e61ec60fc3249703d0418036880e3d19805bfd78e2da174b5e230e46dbbea0"
+    },
+    {
+      "path": "assets/private/audio/silence.mp3",
+      "sha256": "1aecf95d1a94d7002d68e9647e3c90f71383dbfd6638bf133eed63245a2eec1d"
+    },
+    {
+      "path": "assets/private/audio/uf-nanumu.mp3",
+      "sha256": "765b98cbfa41e5c336f9b266a02740f8d1d94378747c781cc72ff56cda586f92"
+    },
+    {
+      "path": "assets/private/facial-rig.css",
+      "sha256": "6753dc84ede97d0ae70784e1a2a0d85353fd90193fc11f8f3198a11844ef0fc1"
+    },
+    {
+      "path": "assets/private/facial-rig.js",
+      "sha256": "b419a2fdf00eb437f1b66d1602afaca996d6a257ce655233e7ddf28d19525d68"
+    },
+    {
+      "path": "browser/facial_rig.ts",
+      "sha256": "388a492a3b84ff3767a3f92b43f65da1b1d179e372f055ff4c9045a0b0e3b2fd"
+    },
+    {
+      "path": "browser/runtime_core.ts",
+      "sha256": "60ddeb57fbbf5de6bb6459106c3e48facfe17c1857358bb4e5f3902f4ff58f2b"
+    },
+    {
+      "path": "deno.json",
+      "sha256": "544d9c79f9781ab1d59686c51b09033f981f897b425ea15385b1289f2089e42c"
+    },
+    {
+      "path": "internal/generator.ts",
+      "sha256": "6400b638a331dd470d18d893dd80168e77c597ff40ab3afff6eb58b61d4838a6"
+    },
+    {
+      "path": "mod.ts",
+      "sha256": "c20e758b2e0d55c21b8c3b868151ab4cb185cbe5621e990fa9587a349e0b5d90"
+    },
+    {
+      "path": "server/avataaars_preset.ts",
+      "sha256": "a5e16b223c21a9936255231c12f1fa4d4b3ab4bc2b73954d72369f121eeb7a46"
+    },
+    {
+      "path": "server/control_bank.ts",
+      "sha256": "2688cca3f2bb015f556d39f36b007415355583c8f1b7b0fb53feeab1aa8b1637"
+    },
+    {
+      "path": "server/decompose.ts",
+      "sha256": "4b5248349d5b5b2c0e0e73e3c1aa22b21166019c19cf8a2925da108ecc27fd53"
+    },
+    {
+      "path": "server/mod.ts",
+      "sha256": "e06beb104ab6ea7831f0f9d129ff698194a16d245f381ee010552f7afbc661cc"
+    },
+    {
+      "path": "server/personality.ts",
+      "sha256": "d81a090801263c6852bb589f9423f408276e297284d138ec83c5ea175bb6e1eb"
+    },
+    {
+      "path": "server/render.ts",
+      "sha256": "20a17b1bb45c927df88c676deca01994a0ceccd7f314d94ace421e09cddd9a6d"
+    },
+    {
+      "path": "tools/build_facial_rig.ts",
+      "sha256": "68691f420ed9688c2cee79a866c1ced295fe192c0df3fd33b53d7273e3b3318c"
+    },
+    {
+      "path": "tools/package_integrity.ts",
+      "sha256": "127d743472af7d85d22fa17c05b17a11d7fe8296b61586467aa149f440902837"
+    },
+    {
+      "path": "tools/runtime_metrics.ts",
+      "sha256": "8c281c1378638b2f87219669a1accf5215fe31f9573101a462b22997cc34dbc6"
+    },
+    {
+      "path": "types.ts",
+      "sha256": "5c88fbf8fc33c6482da14c1cbb5f238ad1b2dc4966cb37c5293d69b1f1c44efa"
+    }
+  ]
+}

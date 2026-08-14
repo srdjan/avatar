@@ -1,11 +1,11 @@
 # @srdjan/avatar
 
 `@srdjan/avatar` is a local Deno package for deterministic human and bot avatars, facial-rig SSR,
-and the browser assets used by the rig. Version `0.4.0` is intentionally unpublished.
+and the browser assets used by the rig. Version `0.5.0` is intentionally unpublished.
 
 ## Local use
 
-Link the package from a consumer `deno.json` without a registry import:
+Link the package from a consumer `deno.json`:
 
 ```json
 {
@@ -13,166 +13,262 @@ Link the package from a consumer `deno.json` without a registry import:
 }
 ```
 
-Use only the three public entry points:
+The package has exactly three public entry points:
 
 ```ts
-import { createAvatarGenerator } from "@srdjan/avatar";
+import {
+  createAvatarGenerator,
+  type FacialReaction,
+  parseFacialReactionIdentity,
+} from "@srdjan/avatar";
+import { AVATAR_ASSETS } from "@srdjan/avatar/assets";
 import { createRigControlBank, renderFacialRig } from "@srdjan/avatar/server";
-import { AVATAR_ASSETS, DEFAULT_VOICE_PACK } from "@srdjan/avatar/assets";
-
-const avatars = createAvatarGenerator();
-const bot = avatars.forBot("mason-steady");
-const controlBank = createRigControlBank(bot);
-
-const scriptBytes = await Deno.readFile(AVATAR_ASSETS.facialRigScript.url);
-console.log(bot.kind, scriptBytes.length, DEFAULT_VOICE_PACK.gasp);
-console.log(controlBank?.layers.smile.length);
 ```
 
-`internal/` and `assets/private/` are not module entry points. Serve or copy the asset URLs from
-`@srdjan/avatar/assets` through the consumer's own HTTP boundary.
+`internal/` and `assets/private/` are implementation details. Serve or copy asset descriptors from
+`@srdjan/avatar/assets` through the consumer's HTTP boundary.
 
-`renderFacialRig` escapes caller-owned text and IDs. Bot SVG input must use the package's narrow
-facial-rig SVG vocabulary: active elements, event attributes, executable URLs, and generator output
-outside that vocabulary are never inlined. Rejected markup degrades to one blank layer with a
-`console.warn`, so a single bad avatar cannot fail the caller's whole render.
+`renderFacialRig` escapes caller text and IDs. Bot SVG input must use the package's narrow SVG
+vocabulary. Active elements, event attributes, executable URLs, and unknown generator markup are
+rejected. A rejected layer becomes blank and emits one `console.warn`; it does not fail the whole
+render.
 
 Pass `createRigControlBank(avatar)` to the matching bot or generated-human `controlBank` field when
-the browser should switch real expression artwork. The bank is optional. Human photos intentionally
-return `null` and keep static tint and outline behavior.
+the browser should switch expression artwork. The bank is optional. Human photos return `null` and
+keep static tint and outline behavior.
 
-## Browser contract
+## Atomic reactions
 
-`browser/runtime_core.ts` owns pure reaction and audio decisions. `browser/facial_rig.ts` interprets
-those decisions through explicit browser capabilities. `deno task browser:build` generates the
-single classic script at `assets/private/facial-rig.js`; do not edit that output directly. Those are
-esbuild bytes used verbatim, so the file is not formatted to the repository style and `deno fmt`
-skips it: the script carries a SHA-256 compatibility lock, and every input to it stays pinned.
-Consumers access it only through `AVATAR_ASSETS.facialRigScript`, and it installs one global:
-`window.FacialRig`. `AVATAR_ASSETS.facialRigStyles` is its stylesheet and must load before any app
-CSS that overrides `.avatar-rig` or `.face-*` rules.
+A `FacialReaction` is one complete command. Consumers cannot select visual state and audio
+independently.
 
-```html
-<link rel="stylesheet" href="/assets/facial-rig.css">
-<script src="/assets/facial-rig.js" defer></script>
-<script src="/assets/app.js" defer></script>
+```ts
+const parsed = parseFacialReactionIdentity("match-7:hand-3:event-42");
+if (parsed.tag !== "accepted") throw new Error(parsed.reason);
+
+const reaction = {
+  identity: parsed.identity,
+  state: "smile",
+  kind: "TrickWon",
+  intensity: 2,
+  motion: "pop",
+  durationMs: 900,
+  confidence: 0.9,
+} as const satisfies FacialReaction;
+
+const laughIdentity = parseFacialReactionIdentity("match-7:hand-3:event-43");
+if (laughIdentity.tag !== "accepted") throw new Error(laughIdentity.reason);
+
+const laugh = {
+  ...reaction,
+  identity: laughIdentity.identity,
+  gesture: "laugh",
+  qualifier: "climactic",
+} as const satisfies FacialReaction;
 ```
 
-Initialize once with the served asset URLs, then call `sync()` whenever the rig DOM is replaced:
+State-only reactions omit `gesture` and `qualifier`. A laugh reaction requires both
+`gesture: "laugh"` and a `standard` or `climactic` qualifier. The remaining boundaries are strict:
+`intensity` is 1, 2, or 3; `motion` is `pop`, `shake`, or `sink`; `durationMs` is positive and
+finite; and `confidence` is finite from 0 to 1. Unknown fields reject the whole reaction.
+
+Identity is opaque and exact. The runtime does not trim, fold case, or normalize Unicode. Reusing
+one identity with a different payload rejects the transaction. Moving an unchanged identity between
+lanes does not replay it.
+
+Visual state determines semantic audio:
+
+| State                | Semantic result                             |
+| -------------------- | ------------------------------------------- |
+| `neutral`, `focused` | silent                                      |
+| `smile`              | `Happiness`                                 |
+| `sad`                | `Sadness`                                   |
+| `worry`              | `Worry`                                     |
+| `mad`                | `Anger`                                     |
+| `surprised`          | `Surprise`                                  |
+| `laugh` gesture      | `Laughter.standard` or `Laughter.climactic` |
+
+## SSR protocol
+
+Every rig carries a non-empty match scope, an audio profile ID, and three nullable reaction lanes.
+The renderer serializes each lane as one HTML-escaped JSON value or the literal `null`.
+
+```ts
+const avatars = createAvatarGenerator();
+const bot = avatars.forBot("mason-steady");
+
+const html = renderFacialRig({
+  id: "east",
+  label: "East bot",
+  matchScope: "match-7",
+  audioProfileId: "mason-steady",
+  reaction,
+  precedingReaction: null,
+  microReaction: null,
+  personality: { amplitudeScale: 1, durationScale: 1, audioProbability: 1 },
+  rigKind: "bot",
+  baseSvg: bot.src,
+  expressionSvg: bot.emotions.focused,
+  microSvg: bot.emotions.focused,
+  controlBank: createRigControlBank(bot),
+});
+```
+
+The browser reads `data-reaction`, `data-preceding-reaction`, and `data-micro-reaction` atomically.
+Legacy per-field reaction attributes are not part of v0.5.0.
+
+`matchScope` resets the identity ledger for a new match. Once a live rig advances to a new scope, a
+later update cannot restore a retired scope.
+
+## Browser setup
+
+`browser/runtime_core.ts` owns pure reaction and admission decisions. `browser/facial_rig.ts`
+applies those decisions through browser capabilities. `deno task browser:build` creates the classic
+script at `assets/private/facial-rig.js`. Do not edit that file directly.
+
+Consumers load the declared script and stylesheet, then initialize the runtime with a complete
+profile catalog:
 
 ```js
-window.FacialRig.init({
-  audioAssets: {
-    gasp: "/assets/avatars/opa.mp3",
-    laugh: "/assets/avatars/haha.mp3",
-    sigh: "/assets/avatars/uf-nanumu.mp3",
-    groan: "/assets/avatars/uf-nanumu.mp3",
-    challenge: "/assets/avatars/nenene.mp3",
-    laughClimactic: "/assets/avatars/hahaha.mp3",
-  },
-  silenceSrc: "/assets/avatars/silence.mp3",
+const served = (asset) => `/assets/avatars/${asset.fileName}`;
+
+const masonSteady = {
+  Happiness: { src: served(AVATAR_ASSETS.opa), gain: 0.8 },
+  Sadness: { src: served(AVATAR_ASSETS.ufNanumu), gain: 0.7 },
+  Worry: { src: served(AVATAR_ASSETS.nenene), gain: 0.65 },
+  Anger: { src: served(AVATAR_ASSETS.ufNanumu), gain: 0.85 },
+  Surprise: { src: served(AVATAR_ASSETS.opa), gain: 0.9 },
+  "Laughter.standard": { src: served(AVATAR_ASSETS.haha), gain: 0.75 },
+  "Laughter.climactic": { src: served(AVATAR_ASSETS.hahaha), gain: 1 },
+};
+
+const receipt = window.FacialRig.init({
+  audioProfiles: { "mason-steady": masonSteady },
+  silenceSrc: served(AVATAR_ASSETS.silence),
   isAudioEnabled: () => userMutePreference !== "muted",
 });
 
+if (receipt.tag === "rejected") console.error(receipt.reason);
 window.FacialRig.sync();
 ```
 
-Derive that `audioAssets` map from `DEFAULT_VOICE_PACK` and `AVATAR_ASSETS[id].fileName` rather than
-hardcoding it, so a renamed asset stays consistent on both sides of the HTTP boundary.
+Each profile must contain exactly the seven slots in the example. A slot needs a non-empty `src` and
+a finite `gain` from 0 to 1. The catalog must contain at least one profile. The runtime snapshots an
+accepted catalog and rejects an incomplete or extra-key catalog as
+`{ tag: "rejected", reason: "invalid-profile-catalog" }`.
 
-| Method                           | Description                                                            |
-| -------------------------------- | ---------------------------------------------------------------------- |
-| `init(config)`                   | One-time setup. Set `audioAssets`, `silenceSrc`, `isAudioEnabled`.     |
-| `prepareSwap(fragment)`          | Preserve live rig nodes during HTMX swaps while accepting fresh state. |
-| `sync()`                         | Re-scan `.avatar-rig` elements and apply pending reactions.            |
-| `control(command)`               | Set, trigger, or release externally owned live affect.                 |
-| `play(req)`                      | Imperative voice-cue trigger. Normally called internally on reactions. |
-| `startSpeaking` / `stopSpeaking` | Drive the speaking-mouth envelope from an audio source.                |
+`init` is tagged, transactional, and repeatable. A later accepted call replaces the catalog, silence
+source, and audio predicate without installing duplicate listeners or replaying reactions. A
+rejected call leaves the last accepted configuration active.
 
-Before the runtime plays a voice cue it dispatches a cancelable `facial-rig:voice-cue` `CustomEvent`
-on the rig element, so a consumer can suppress, log, or reroute audio:
+The installed global has six methods:
 
-```js
-rigEl.addEventListener("facial-rig:voice-cue", (e) => {
-  // e.detail = { cue, src, durationMs, intensity, rigKind, rigId, seatId, seatAudioProbability }
-  if (myAppMixer.isMuted()) e.preventDefault();
-});
-```
+| Method                                  | Contract                                                                 |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| `init(config)`                          | Validate and snapshot a complete configuration; return a tagged receipt. |
+| `prepareSwap(fragment)`                 | Preserve compatible live nodes while accepting fresh atomic state.       |
+| `sync()`                                | Reconcile `.avatar-rig` nodes and apply unseen reactions.                |
+| `control(command)`                      | Apply an externally owned `set` or `release` command.                    |
+| `startSpeaking(rigId, cue, durationMs)` | Drive the mouth envelope for caller-owned speech.                        |
+| `stopSpeaking(rigId)`                   | Stop the caller-owned mouth envelope.                                    |
 
-Per-seat probability comes from `personality.audioProbability` on the SSR side, which the renderer
-writes as `data-seat-audio-probability`. A value of `0` mutes the seat.
+There is no arbitrary `play()` method and no control `trigger` command.
+
+### Lifecycle silence and admission
+
+Script installation, initial hydration, accepted reinitialization, DOM replacement, lane movement,
+release, and restoration of an already seen identity are silent. `neutral`, `focused`, and a new
+reaction whose state already matches the rendered baseline are also silent. External control and the
+speaking envelope never select semantic audio.
+
+An unknown profile or identity conflict rejects the whole rig transaction. The runtime does not
+reserve the identity, so a corrected update can retry it. For a valid new audible reaction,
+admission still checks the global audio predicate, rig kind, per-seat probability, confidence, the
+two-channel cap, active-seat ownership, a 600 ms seat gap, and semantic-family cooldown. Intensity 3
+bypasses the family cooldown. Rejected admission does not affect visual delivery.
+
+After admission, the rig dispatches a cancelable `facial-rig:voice-cue` event. The historical event
+name remains, but `event.detail` is `FacialRigSemanticAudioDetail`: it contains family, qualifier,
+profile ID, exact reaction identity, resolved source and gain, and delivery metadata. Preventing the
+event stops media playback.
+
+Media is a nonfatal edge. Constructor, load, playback, analyzer, error-event, timeout, and teardown
+failures release audio capacity locally. Visual reaction timers continue, listeners are removed, and
+later reactions can play.
 
 ### External live control
 
-`control()` accepts a tagged command and returns an accepted or rejected receipt. A source owns one
-rig until it releases it. Its `sequence` must be a strictly increasing safe non-negative integer.
-Continuous `set` snapshots are coalesced so only the freshest value is painted once per animation
-frame. Discrete `trigger` and `release` edges apply immediately.
+`control()` accepts atomic `set` and `release` commands and returns an accepted or rejected receipt.
+One source owns a rig until release. Its sequence must be a strictly increasing safe non-negative
+integer.
 
 ```js
-const first = window.FacialRig.control({
+window.FacialRig.control({
   tag: "set",
   rigId: "avatar-rig-east",
   sourceId: "game-state",
   sequence: 1,
   preset: "worry",
-  features: {
-    browInnerRaise: 0.8,
-    jawOpen: 0.15,
-  },
-});
-
-window.FacialRig.control({
-  tag: "trigger",
-  rigId: "avatar-rig-east",
-  sourceId: "game-state",
-  sequence: 2,
-  gesture: "laugh",
-  intensity: 0.75,
+  features: { browInnerRaise: 0.8, jawOpen: 0.15 },
 });
 
 window.FacialRig.control({
   tag: "release",
   rigId: "avatar-rig-east",
   sourceId: "game-state",
-  sequence: 3,
+  sequence: 2,
 });
 ```
 
 Presets are `neutral`, `focused`, `smile`, `sad`, `worry`, `mad`, and `surprised`. Feature values
-are finite numbers from 0 to 1 for `browInnerRaise`, `browLower`, `eyeWiden`, `eyeSquint`,
-`cheekRaise`, `mouthCornerLift`, `mouthCornerDrop`, and `jawOpen`. Explicit features override their
-preset recipe. Invalid values are rejected rather than clamped.
+are finite numbers from 0 to 1. Invalid values reject the command instead of being clamped. Control
+can change artwork, feature pose, wrapper motion, tint, and speech pose; it does not emit semantic
+audio.
 
-Receipts report substrate capabilities, applied channels, ignored feature controls, and `full` or
-`degraded` fidelity. Bots support feature pose. Generated humans use supplied artwork and softer
-layer motion. Photos use tint and outline only. Reduced motion applies final artwork, tint, and
-static pose without rhythmic or spatial motion. A `laugh` gesture does not play sound; call `play()`
-separately when audio is wanted.
+## Generated assets and source integrity
 
-### Consumer-tunable CSS variables
-
-| Variable                                                         | Role                                         |
-| ---------------------------------------------------------------- | -------------------------------------------- |
-| `--depth-brows`, `--depth-eyes`, `--depth-nose`, `--depth-mouth` | Per-feature-plane parallax scalar (0 = flat) |
-| `--rig-shadow-alpha`                                             | Light-direction shadow opacity               |
-| `--face-contour-alpha`                                           | Authored jaw and ear contour opacity         |
-| `--face-highlight-alpha`                                         | Authored forehead highlight opacity          |
-
-`decomposeFaceFeatures` emits three nested groups per selector: an outer `<g class="<name>-plane">`
-for CSS parallax, the original positioning `<g transform="...">` kept verbatim (a CSS transform here
-would override the SVG attribute and collapse the feature to the origin), and an inner
-`<g class="<name>">` that carries the inline transform the runtime writes for reactions.
-
-## Checks
+The browser script and its contract hash change only through this sequence:
 
 ```sh
 deno task browser:build
-deno task browser:coverage
+deno task browser:check
+deno task browser:metrics
+```
+
+`tools/runtime_metrics.ts` pins the generated runtime to at most 376 branches and maximum function
+complexity 14.
+
+`package.integrity.json` SHA-256 pins package metadata, public and internal modules, server and
+browser source, every declared private asset, and the build, metrics, and integrity tools. Entries
+are sorted. README, assumptions, locks, tests, fixtures, repository guidance, and the manifest
+itself are outside this behavior-bearing closure.
+
+Check mode is read-only and fails on changed, missing, or newly added behavior files. It also
+rejects symlinks and paths that escape the package root:
+
+```sh
+deno task package:integrity
+```
+
+Regenerate the manifest only after the intended closure is final:
+
+```sh
+deno task package:integrity:write
+```
+
+The complete local gate is:
+
+```sh
 deno task check
 ```
 
-The build command regenerates the checked classic script. The coverage command runs the Chromium
-suite with executable-line, V8-block, and function budgets. The aggregate check first verifies that
-the generated script is fresh and within its branch and complexity budgets, then runs formatting,
-linting, type checks, unit tests, browser tests, and the isolated external-consumer fixture.
+It verifies generated bytes, metrics, source integrity, formatting, lint, types, Deno tests,
+Chromium behavior, and the isolated external consumer.
+
+## Breaking v0.5.0 cutover
+
+Version 0.5.0 directly removes `RigVoiceCue`, `ReactionSpec`, `DEFAULT_VOICE_PACK`, arbitrary
+`FacialRig.play()`, control `trigger`, and legacy per-field reaction transport. There are no aliases
+or migration adapters. Consumers must switch to atomic `FacialReaction` values, complete semantic
+audio profiles, tagged `init`, nullable lane JSON, and `set` or `release` controls before vendoring
+this source package.

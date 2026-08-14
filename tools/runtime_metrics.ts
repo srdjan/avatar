@@ -16,13 +16,13 @@ const source = gitRef === undefined
   : await readGitFile(gitRef, assetPath);
 const metrics = measureRuntime(source);
 console.log(JSON.stringify({ source: gitRef ?? "working-tree", ...metrics }));
-if (check && metrics.branches > 392) {
-  throw new Error(`runtime branch budget exceeded: ${metrics.branches} > 392`);
+if (check && metrics.branches > 376) {
+  throw new Error(`runtime branch budget exceeded: ${metrics.branches} > 376`);
 }
-if (check && metrics.maxComplexity.complexity > 15) {
+if (check && metrics.maxComplexity.complexity > 14) {
   throw new Error(
     `runtime complexity budget exceeded: ${metrics.maxComplexity.name} ` +
-      `${metrics.maxComplexity.complexity} > 15`,
+      `${metrics.maxComplexity.complexity} > 14`,
   );
 }
 

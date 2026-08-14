@@ -1001,7 +1001,8 @@
         ];
         idleActions[Number([canAnimate(), rigKind(rig) !== "human-photo"].every(Boolean))]();
         startBlinkLoop(rig);
-      } catch {
+      } catch (reason) {
+        ignoreBrowserFailure(reason);
       }
     }
     function sync() {
@@ -1063,7 +1064,8 @@
           activeRig.replaceWith(incoming.cloneNode(true));
         };
         [changedSignature, matchingSignature][Number(sameRigSignature(activeRig, incoming))]();
-      } catch {
+      } catch (reason) {
+        ignoreBrowserFailure(reason);
       }
     }
     function prepareSwap(fragment) {
@@ -1077,7 +1079,8 @@
         ].every(Boolean));
         const validConfig = activeConfig;
         queryRoot.querySelectorAll(".avatar-rig[id]").forEach((incoming) => prepareIncomingSwap(incoming, validConfig));
-      } catch {
+      } catch (reason) {
+        ignoreBrowserFailure(reason);
       }
     }
     function control(input) {
@@ -1589,7 +1592,8 @@
           if (context?.state === "suspended") {
             try {
               void Promise.resolve(context.resume()).catch(() => void 0);
-            } catch {
+            } catch (reason) {
+              ignoreBrowserFailure(reason);
             }
           }
           const silenceSrc = config?.silenceSrc ?? "";
@@ -1603,7 +1607,8 @@
             if (playing !== void 0) {
               void Promise.resolve(playing).catch(() => safely(() => silence.pause()));
             }
-          } catch {
+          } catch (reason) {
+            ignoreBrowserFailure(reason);
           }
         }, { once: true });
         gestureInstalled = true;
@@ -1934,8 +1939,12 @@
   function safely(effect) {
     try {
       effect();
-    } catch {
+    } catch (reason) {
+      ignoreBrowserFailure(reason);
     }
+  }
+  function ignoreBrowserFailure(_reason) {
+    return;
   }
   function isPlainRecord(value) {
     return Object.prototype.toString.call(value) === "[object Object]";

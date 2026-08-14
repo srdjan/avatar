@@ -1,6 +1,6 @@
 {
   "name": "@srdjan/avatar",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "exports": {
     ".": "./mod.ts",
     "./server": "./server/mod.ts",
@@ -33,15 +33,17 @@
   "tasks": {
     "fmt": "deno fmt --check",
     "lint": "deno lint && deno lint --no-config --rules-exclude=no-window,no-window-prefix,no-var,no-inner-declarations,no-unused-vars assets/private/facial-rig.js",
-    "type": "deno check mod.ts server/mod.ts assets/mod.ts browser/runtime_core.ts browser/facial_rig.ts tools/build_facial_rig.ts tools/runtime_metrics.ts tests/unit_test.ts tests/runtime_unit_test.ts tests/contract_test.ts tests/browser_test.ts",
-    "unit": "deno test --allow-read --allow-run=deno tests/unit_test.ts tests/runtime_unit_test.ts tests/contract_test.ts",
+    "type": "deno check mod.ts server/mod.ts assets/mod.ts browser/runtime_core.ts browser/facial_rig.ts tools/build_facial_rig.ts tools/package_integrity.ts tools/runtime_metrics.ts tests/unit_test.ts tests/runtime_unit_test.ts tests/contract_test.ts tests/browser_test.ts",
+    "unit": "deno test --allow-read --allow-write --allow-run=deno tests/unit_test.ts tests/runtime_unit_test.ts tests/contract_test.ts",
     "browser:build": "deno run -A tools/build_facial_rig.ts",
     "browser:check": "deno run -A tools/build_facial_rig.ts --check",
     "browser:metrics": "deno run --allow-read --allow-run=git --allow-env tools/runtime_metrics.ts --check",
+    "package:integrity": "deno run --allow-read tools/package_integrity.ts --check",
+    "package:integrity:write": "deno run --allow-read --allow-write=package.integrity.json tools/package_integrity.ts --write",
     "playwright:install": "deno run -A npm:playwright@1.60.0 install chromium",
     "browser": "deno task browser:check && deno task playwright:install && deno test -A tests/browser_test.ts",
     "browser:coverage": "deno task browser:check && deno task playwright:install && AVATAR_BROWSER_COVERAGE=1 deno test -A tests/browser_test.ts",
     "consumer": "deno task --config fixtures/external-consumer/deno.json check",
-    "check": "deno task browser:check && deno task browser:metrics && deno task fmt && deno task lint && deno task type && deno task unit && deno task browser && deno task consumer"
+    "check": "deno task browser:check && deno task browser:metrics && deno task package:integrity && deno task fmt && deno task lint && deno task type && deno task unit && deno task browser && deno task consumer"
   }
 }
