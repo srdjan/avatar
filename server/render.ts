@@ -3,7 +3,7 @@
 // human photo keeps only wrapper-level tint and motion.
 
 import {
-  type ReactionSpec,
+  type FacialReaction,
   RIG_CONTROL_ARTWORK,
   type RigControlArtwork,
   type RigControlBank,
@@ -93,9 +93,11 @@ type CommonInput = Readonly<{
   id: string;
   // Finished accessible label. The package does not compose localized text.
   label: string;
-  reaction: ReactionSpec | null;
-  microReaction: ReactionSpec | null;
-  precedingReaction: ReactionSpec | null;
+  matchScope: string;
+  audioProfileId: string;
+  reaction: FacialReaction | null;
+  microReaction: FacialReaction | null;
+  precedingReaction: FacialReaction | null;
   personality: RigPersonality;
 }>;
 
@@ -108,8 +110,6 @@ export type RenderRigInput =
       expressionSvg: string;
       microSvg: string;
       controlBank?: Extract<RigControlBank, { rigKind: "bot" }>;
-      reactionBotEmotion?: string | null;
-      microBotEmotion?: string | null;
     }>
     | Readonly<{
       rigKind: "human-generated";
@@ -255,18 +255,18 @@ function rigDataAttrs(input: RenderRigInput): string {
     `id="avatar-rig-${esc(input.id)}"`,
     `data-rig-kind="${input.rigKind}"`,
     `data-rig-signature="${rigSignature(input)}"`,
+    `data-match-scope="${esc(input.matchScope)}"`,
+    `data-audio-profile-id="${esc(input.audioProfileId)}"`,
     `data-seat-audio-probability="${p.audioProbability}"`,
     `data-seat-duration-scale="${p.durationScale}"`,
-    ...reactionDataAttrs("reaction", input.reaction),
-    ...reactionDataAttrs("preceding", input.precedingReaction),
-    ...reactionDataAttrs("micro", input.microReaction),
+    reactionDataAttr("reaction", input.reaction),
+    reactionDataAttr("preceding-reaction", input.precedingReaction),
+    reactionDataAttr("micro-reaction", input.microReaction),
   ];
   if (input.rigKind === "bot") {
     if (p.amplitudeScale !== 1) {
       attrs.push(`style="--seat-amplitude-scale: ${p.amplitudeScale}"`);
     }
-    attrs.push(`data-reaction-bot-emotion="${esc(input.reactionBotEmotion ?? "")}"`);
-    attrs.push(`data-micro-bot-emotion="${esc(input.microBotEmotion ?? "")}"`);
   }
   return attrs.join(" ");
 }
@@ -298,59 +298,8 @@ function hashString(s: string): string {
   return (hash >>> 0).toString(36);
 }
 
-function reactionDataAttrs(prefix: string, reaction: ReactionSpec | null): string[] {
-  const attrs = reactionAttributes(reaction);
-  return [
-    `data-${prefix}-kind="${esc(attrs.kind)}"`,
-    `data-${prefix}-expression="${esc(attrs.expression)}"`,
-    `data-${prefix}-intensity="${attrs.intensity}"`,
-    `data-${prefix}-motion="${esc(attrs.motion)}"`,
-    `data-${prefix}-duration-ms="${attrs.durationMs}"`,
-    `data-${prefix}-confidence="${attrs.confidence}"`,
-    `data-${prefix}-voice-cue="${esc(attrs.voiceCue)}"`,
-    `data-${prefix}-id="${attrs.id}"`,
-  ];
-}
-
-type ReactionAttributes = Readonly<{
-  kind: string;
-  expression: string;
-  intensity: number;
-  motion: string;
-  durationMs: number;
-  confidence: number;
-  voiceCue: string;
-  id: number;
-}>;
-
-const NO_REACTION_ATTRIBUTES = Object.freeze({
-  kind: "",
-  expression: "",
-  intensity: 0,
-  motion: "",
-  durationMs: 0,
-  confidence: 1,
-  voiceCue: "",
-  id: 0,
-}) satisfies ReactionAttributes;
-
-function reactionAttributes(reaction: ReactionSpec | null): ReactionAttributes {
-  if (reaction === null) return NO_REACTION_ATTRIBUTES;
-  return {
-    kind: reaction.kind ?? "",
-    expression: reaction.expression,
-    intensity: reaction.intensity,
-    motion: reaction.motion,
-    durationMs: reaction.durationMs,
-    confidence: clampNumber(reaction.confidence ?? 1, 0, 1),
-    voiceCue: reaction.voiceCue,
-    id: reaction.id,
-  };
-}
-
-function clampNumber(n: number, min: number, max: number): number {
-  if (!Number.isFinite(n)) return max;
-  return Math.max(min, Math.min(max, n));
+function reactionDataAttr(name: string, reaction: FacialReaction | null): string {
+  return `data-${name}="${esc(JSON.stringify(reaction))}"`;
 }
 
 // Rejected SVG degrades to one blank layer instead of throwing: a rig renders

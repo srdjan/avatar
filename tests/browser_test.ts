@@ -1,11 +1,17 @@
 import { assertEquals } from "jsr:@std/assert@1.0.14";
 import type {
-  ReactionSpec,
+  CharacterAudioProfile,
+  CharacterAudioProfileCatalog,
+  FacialReaction,
+  FacialRigApi,
+  FacialRigSemanticAudioDetail,
   RigControlBank,
-  RigControlCommand,
-  RigControlReceipt,
 } from "@srdjan/avatar";
-import { createAvatarGenerator, RIG_CONTROL_PRESETS } from "@srdjan/avatar";
+import {
+  CHARACTER_AUDIO_PROFILE_SLOTS,
+  createAvatarGenerator,
+  RIG_CONTROL_PRESETS,
+} from "@srdjan/avatar";
 import { AVATAR_ASSETS } from "@srdjan/avatar/assets";
 import { createRigControlBank, renderFacialRig } from "@srdjan/avatar/server";
 import { type Browser, chromium, type Page } from "npm:playwright@1.60.0";
@@ -19,16 +25,6 @@ const PERSONALITY = {
   durationScale: 1,
   audioProbability: 1,
 } as const;
-
-type FacialRigApi = Readonly<{
-  init(config?: Readonly<Record<string, unknown>>): void;
-  prepareSwap(fragment: ParentNode): void;
-  sync(): void;
-  play(request: Readonly<Record<string, unknown>>): void;
-  startSpeaking(rigId: string, cue: string, durationMs: number): void;
-  stopSpeaking(rigId: string): void;
-  control(command: RigControlCommand): RigControlReceipt;
-}>;
 
 function localPath(url: URL): string {
   return decodeURIComponent(url.pathname);
@@ -82,29 +78,56 @@ async function launchBrowser(
 
 function reaction(
   id: number,
-  overrides: Partial<ReactionSpec> = {},
-): ReactionSpec {
+  overrides: Readonly<Record<string, unknown>> = {},
+): FacialReaction {
+  const expressionToState = {
+    neutral: "neutral",
+    focused: "focused",
+    happiness: "smile",
+    sadness: "sad",
+    anger: "mad",
+    fear: "worry",
+    surprise: "surprised",
+  } as const;
+  const expression = overrides.expression;
+  const state = typeof overrides.state === "string"
+    ? overrides.state as FacialReaction["state"]
+    : typeof expression === "string" && Object.hasOwn(expressionToState, expression)
+    ? expressionToState[expression as keyof typeof expressionToState]
+    : "smile";
   return {
-    kind: "TestReaction",
-    expression: "happiness",
-    intensity: 1,
-    motion: "pop",
-    voiceCue: "laugh",
-    durationMs: 120,
-    confidence: 1,
-    id,
-    ...overrides,
-  };
+    identity: typeof overrides.identity === "string" ? overrides.identity : `reaction-${id}`,
+    state,
+    kind: typeof overrides.kind === "string" ? overrides.kind : "TestReaction",
+    intensity: overrides.intensity === 2 || overrides.intensity === 3 ? overrides.intensity : 1,
+    motion: overrides.motion === "shake" || overrides.motion === "sink" ? overrides.motion : "pop",
+    durationMs: typeof overrides.durationMs === "number" ? overrides.durationMs : 120,
+    confidence: typeof overrides.confidence === "number" ? overrides.confidence : 1,
+    ...(overrides.gesture === "laugh" &&
+        (overrides.qualifier === "standard" || overrides.qualifier === "climactic")
+      ? { gesture: "laugh" as const, qualifier: overrides.qualifier }
+      : {}),
+  } as FacialReaction;
 }
+
+const COMPLETE_AUDIO_PROFILE = Object.fromEntries(
+  CHARACTER_AUDIO_PROFILE_SLOTS.map((slot) => [slot, { src: `/${slot}.mp3`, gain: 1 }]),
+) as CharacterAudioProfile;
+
+const COMPLETE_AUDIO_PROFILES: CharacterAudioProfileCatalog = {
+  "bot-test": COMPLETE_AUDIO_PROFILE,
+};
 
 function renderBotRig(
   overrides: Readonly<{
     id?: string;
     baseSvg?: string;
     amplitudeScale?: number;
-    reaction?: ReactionSpec | null;
-    precedingReaction?: ReactionSpec | null;
-    microReaction?: ReactionSpec | null;
+    matchScope?: string;
+    audioProfileId?: string;
+    reaction?: FacialReaction | null;
+    precedingReaction?: FacialReaction | null;
+    microReaction?: FacialReaction | null;
     controlBank?: boolean;
   }> = {},
 ): string {
@@ -124,6 +147,8 @@ function renderBotRig(
   return renderFacialRig({
     id: overrides.id ?? "east",
     label: overrides.id ?? "East",
+    matchScope: overrides.matchScope ?? "match-1",
+    audioProfileId: overrides.audioProfileId ?? "bot-test",
     reaction: overrides.reaction ?? null,
     precedingReaction: overrides.precedingReaction ?? null,
     microReaction: overrides.microReaction ?? null,
@@ -136,12 +161,97 @@ function renderBotRig(
     expressionSvg: FACE_SVG,
     microSvg: FACE_SVG,
     ...(overrides.controlBank === true ? { controlBank } : {}),
-    reactionBotEmotion: "happy",
-    microBotEmotion: "focused",
   });
 }
 
-Deno.test("external control composes persistent affect, laugh, speech, and release", async () => {
+Deno.test("script installation is inert and init snapshots a complete profile catalog", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(renderBotRig({ reaction: reaction(1) }));
+    await page.evaluate(() => Math.random = () => 0);
+    await page.addScriptTag({ path: localPath(AVATAR_ASSETS.facialRigScript.url) });
+    const result = await page.evaluate((profiles) => {
+      const target = window as unknown as { FacialRig: FacialRigApi };
+      const rig = document.querySelector<HTMLElement>("#avatar-rig-east")!;
+      const before = {
+        keys: Object.keys(target.FacialRig).sort(),
+        reacting: rig.classList.contains("is-reacting"),
+      };
+      const rejected = target.FacialRig.init({
+        audioProfiles: {},
+        silenceSrc: "/silence.mp3",
+        isAudioEnabled: () => true,
+      });
+      const accepted = target.FacialRig.init({
+        audioProfiles: profiles,
+        silenceSrc: "/silence.mp3",
+        isAudioEnabled: () => true,
+      });
+      target.FacialRig.sync();
+      const reactingAfterHydration = rig.classList.contains("is-reacting");
+      const mutableProfiles = profiles as unknown as Record<
+        string,
+        Record<string, { src: string; gain: number }>
+      >;
+      mutableProfiles["bot-test"]!.Happiness!.src = "/mutated.mp3";
+      const rejectedAfterAccepted = target.FacialRig.init({
+        audioProfiles: {},
+        silenceSrc: "/invalid-silence.mp3",
+        isAudioEnabled: () => false,
+      });
+      let retainedSrc: string | null = null;
+      rig.addEventListener("facial-rig:voice-cue", (event) => {
+        retainedSrc = (event as CustomEvent<FacialRigSemanticAudioDetail>).detail.src;
+      });
+      rig.setAttribute("data-reaction", "null");
+      target.FacialRig.sync();
+      rig.setAttribute(
+        "data-reaction",
+        JSON.stringify({
+          identity: "after-rejected-init",
+          state: "smile",
+          kind: "InitSnapshot",
+          intensity: 3,
+          motion: "pop",
+          durationMs: 20,
+          confidence: 1,
+        }),
+      );
+      target.FacialRig.sync();
+      const corrected = target.FacialRig.init({
+        audioProfiles: profiles,
+        silenceSrc: "/silence.mp3",
+        isAudioEnabled: () => true,
+      });
+      return {
+        before,
+        rejected,
+        accepted,
+        reactingAfterHydration,
+        rejectedAfterAccepted,
+        retainedSrc: retainedSrc as string | null,
+        corrected,
+      };
+    }, COMPLETE_AUDIO_PROFILES);
+    assertEquals(result, {
+      before: {
+        keys: ["control", "init", "prepareSwap", "startSpeaking", "stopSpeaking", "sync"],
+        reacting: false,
+      },
+      rejected: { tag: "rejected", reason: "invalid-profile-catalog" },
+      accepted: { tag: "accepted" },
+      reactingAfterHydration: false,
+      rejectedAfterAccepted: { tag: "rejected", reason: "invalid-profile-catalog" },
+      retainedSrc: "/Happiness.mp3",
+      corrected: { tag: "accepted" },
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("external control composes persistent affect, speech, and release", async () => {
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
@@ -220,20 +330,10 @@ Deno.test("external control composes persistent affect, laugh, speech, and relea
         preset: "worry",
       });
       await new Promise(requestAnimationFrame);
-      const laugh = api.control({
-        tag: "trigger",
-        rigId: "avatar-rig-controlled",
-        sourceId: "game-state",
-        sequence: 3,
-        gesture: "laugh",
-        intensity: 0.8,
-        durationMs: 100,
-      });
       api.startSpeaking("avatar-rig-controlled", "laugh", 100);
       await new Promise(requestAnimationFrame);
       const rig = document.querySelector<HTMLElement>("#avatar-rig-controlled")!;
       const during = {
-        gesturing: rig.classList.contains("is-control-gesturing"),
         preset: rig.querySelector<HTMLElement>(
           ".avatar-control-expression.is-control-current",
         )?.dataset.controlPreset,
@@ -242,14 +342,11 @@ Deno.test("external control composes persistent affect, laugh, speech, and relea
         )?.style.transform ?? "",
       };
       await new Promise((resolve) => setTimeout(resolve, 160));
-      const settledPreset = rig.querySelector<HTMLElement>(
-        ".avatar-control-expression.is-control-current",
-      )?.dataset.controlPreset;
       const release = api.control({
         tag: "release",
         rigId: "avatar-rig-controlled",
         sourceId: "game-state",
-        sequence: 4,
+        sequence: 3,
         transitionMs: 80,
       });
       const releaseTransition = rig.style.getPropertyValue("--control-transition-ms");
@@ -265,9 +362,7 @@ Deno.test("external control composes persistent affect, laugh, speech, and relea
       return {
         stale,
         busyReason: busy.tag === "rejected" ? busy.reason : null,
-        laugh,
         during,
-        settledPreset,
         release,
         releaseTransition,
         nextOwner: nextOwner.tag,
@@ -283,11 +378,8 @@ Deno.test("external control composes persistent affect, laugh, speech, and relea
       sequence: 1,
     });
     assertEquals(state.busyReason, "source-busy");
-    assertEquals(state.laugh.tag, "accepted");
-    assertEquals(state.during.gesturing, true);
-    assertEquals(state.during.preset, "laugh");
+    assertEquals(state.during.preset, "worry");
     assertEquals(state.during.speakingMouth !== "", true);
-    assertEquals(state.settledPreset, "worry");
     assertEquals(state.release.tag, "accepted");
     assertEquals(state.releaseTransition, "80ms");
     assertEquals(state.nextOwner, "accepted");
@@ -331,7 +423,7 @@ Deno.test("continuous control keeps only the freshest set before paint", async (
   }
 });
 
-Deno.test("bankless rigs remain visible under set and trigger control", async () => {
+Deno.test("bankless rigs remain visible under persistent control", async () => {
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
@@ -341,6 +433,8 @@ Deno.test("bankless rigs remain visible under set and trigger control", async ()
     const generated = renderFacialRig({
       id: "bankless-generated",
       label: "Bankless generated",
+      matchScope: "match-1",
+      audioProfileId: "bot-test",
       reaction: null,
       precedingReaction: null,
       microReaction: null,
@@ -364,12 +458,12 @@ Deno.test("bankless rigs remain visible under set and trigger control", async ()
         transitionMs: 0,
       });
       api.control({
-        tag: "trigger",
+        tag: "set",
         rigId: "avatar-rig-bankless-generated",
         sourceId: "director",
         sequence: 1,
-        gesture: "laugh",
-        durationMs: 500,
+        preset: "smile",
+        transitionMs: 0,
       });
       await new Promise(requestAnimationFrame);
       await new Promise(requestAnimationFrame);
@@ -385,7 +479,7 @@ Deno.test("bankless rigs remain visible under set and trigger control", async ()
     });
     assertEquals(result, [
       { id: "bankless-bot", baseOpacity: "1", controlLayers: 0, preset: "smile" },
-      { id: "bankless-generated", baseOpacity: "1", controlLayers: 0, preset: "laugh" },
+      { id: "bankless-generated", baseOpacity: "1", controlLayers: 0, preset: "smile" },
     ]);
   } finally {
     await browser.close();
@@ -415,6 +509,8 @@ Deno.test("control reports substrate capability degradation and boundary failure
     const generated = renderFacialRig({
       id: "generated-control",
       label: "Generated",
+      matchScope: "match-1",
+      audioProfileId: "bot-test",
       reaction: null,
       precedingReaction: null,
       microReaction: null,
@@ -429,6 +525,8 @@ Deno.test("control reports substrate capability degradation and boundary failure
     const photo = renderFacialRig({
       id: "photo-control",
       label: "Photo",
+      matchScope: "match-1",
+      audioProfileId: "bot-test",
       reaction: null,
       precedingReaction: null,
       microReaction: null,
@@ -460,7 +558,9 @@ Deno.test("control reports substrate capability degradation and boundary failure
         preset: "mad",
         transitionMs: 0,
       });
-      const invalid = (api.control as unknown as (input: unknown) => RigControlReceipt)({
+      const invalid = (api.control as unknown as (
+        input: unknown,
+      ) => ReturnType<FacialRigApi["control"]>)({
         tag: "set",
         rigId: "avatar-rig-bot-control",
         sourceId: "operator",
@@ -685,7 +785,7 @@ Deno.test("persistent control restores across a direct same-signature replacemen
   }
 });
 
-Deno.test("control lane priority and reduced motion preserve the final signal", async () => {
+Deno.test("atomic laugh preserves control priority and reduced-motion hold behavior", async () => {
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
@@ -708,17 +808,8 @@ Deno.test("control lane priority and reduced motion preserve the final signal", 
         template.innerHTML = reactionHtml;
         api.prepareSwap(template.content);
         api.sync();
-        let voiceEvents = 0;
-        rig.addEventListener("facial-rig:voice-cue", () => voiceEvents++);
-        api.control({
-          tag: "trigger",
-          rigId: rig.id,
-          sourceId: "director",
-          sequence: 2,
-          gesture: "laugh",
-          durationMs: 100,
-        });
         const duringGesture = {
+          gesturing: rig.classList.contains("is-control-gesturing"),
           macro: getComputedStyle(rig.querySelector(".avatar-expression")!).opacity,
           control: getComputedStyle(
             rig.querySelector(".avatar-control-expression.is-control-current")!,
@@ -727,91 +818,96 @@ Deno.test("control lane priority and reduced motion preserve the final signal", 
             rig.querySelector(".avatar-control-expression.is-control-current")!,
           ).zIndex,
         };
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        const duringMacro = {
-          reacting: rig.classList.contains("is-reacting"),
-          control: getComputedStyle(
-            rig.querySelector(".avatar-control-expression.is-control-current")!,
-          ).opacity,
-        };
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 180));
         return {
           duringGesture,
-          duringMacro,
           settled: {
             reacting: rig.classList.contains("is-reacting"),
+            gesturing: rig.classList.contains("is-control-gesturing"),
             control: getComputedStyle(
               rig.querySelector(".avatar-control-expression.is-control-current")!,
             ).opacity,
             preset: rig.dataset.controlPreset,
           },
-          voiceEvents,
         };
       },
       renderBotRig({
         id: "lanes",
         controlBank: true,
-        reaction: reaction(1, { durationMs: 400 }),
+        reaction: reaction(1, {
+          state: "surprised",
+          gesture: "laugh",
+          qualifier: "standard",
+          durationMs: 120,
+        }),
       }),
     );
     assertEquals(animated, {
-      duringGesture: { macro: "1", control: "1", zIndex: "5" },
-      duringMacro: { reacting: true, control: "0" },
-      settled: { reacting: false, control: "1", preset: "worry" },
-      voiceEvents: 0,
+      duringGesture: { gesturing: true, macro: "1", control: "1", zIndex: "5" },
+      settled: { reacting: false, gesturing: false, control: "1", preset: "worry" },
     });
 
     await page.emulateMedia({ reducedMotion: "reduce" });
-    const reduced = await page.evaluate(async () => {
-      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
-      const rig = document.querySelector<HTMLElement>("#avatar-rig-lanes")!;
-      api.control({
-        tag: "release",
-        rigId: rig.id,
-        sourceId: "director",
-        sequence: 3,
-        transitionMs: 0,
-      });
-      const receipt = api.control({
-        tag: "set",
-        rigId: rig.id,
-        sourceId: "director",
-        sequence: 4,
-        preset: "smile",
-      });
-      await new Promise(requestAnimationFrame);
-      const trigger = api.control({
-        tag: "trigger",
-        rigId: rig.id,
-        sourceId: "director",
-        sequence: 5,
-        gesture: "laugh",
-      });
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      return {
-        receipt,
-        trigger: trigger.tag,
-        preset: rig.dataset.controlPreset,
-        transition: rig.style.getPropertyValue("--control-transition-ms"),
-        gestureWrite: rig.style.getPropertyValue("--control-gesture-y"),
-        layerOpacity: getComputedStyle(
-          rig.querySelector(".avatar-control-expression.is-control-current")!,
-        ).opacity,
-      };
-    });
+    const reduced = await page.evaluate(
+      async (reactionHtml) => {
+        const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+        const rig = document.querySelector<HTMLElement>("#avatar-rig-lanes")!;
+        api.control({
+          tag: "release",
+          rigId: rig.id,
+          sourceId: "director",
+          sequence: 3,
+          transitionMs: 0,
+        });
+        const receipt = api.control({
+          tag: "set",
+          rigId: rig.id,
+          sourceId: "director",
+          sequence: 4,
+          preset: "smile",
+        });
+        await new Promise(requestAnimationFrame);
+        const template = document.createElement("template");
+        template.innerHTML = reactionHtml;
+        api.prepareSwap(template.content);
+        api.sync();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return {
+          receipt,
+          gesturing: rig.classList.contains("is-control-gesturing"),
+          preset: rig.dataset.controlPreset,
+          transition: rig.style.getPropertyValue("--control-transition-ms"),
+          gestureWrite: rig.style.getPropertyValue("--control-gesture-y"),
+          layerOpacity: getComputedStyle(
+            rig.querySelector(".avatar-control-expression.is-control-current")!,
+          ).opacity,
+        };
+      },
+      renderBotRig({
+        id: "lanes",
+        matchScope: "match-2",
+        controlBank: true,
+        reaction: reaction(2, {
+          state: "smile",
+          gesture: "laugh",
+          qualifier: "climactic",
+          durationMs: 120,
+        }),
+      }),
+    );
     assertEquals(reduced.receipt.tag, "accepted");
     if (reduced.receipt.tag === "accepted") {
       assertEquals(reduced.receipt.capabilities.wrapperMotion, false);
       assertEquals(reduced.receipt.applied, ["artwork", "featurePose", "tint"]);
     }
     assertEquals({
-      trigger: reduced.trigger,
+      gesturing: reduced.gesturing,
       preset: reduced.preset,
       transition: reduced.transition,
       gestureWrite: reduced.gestureWrite,
       layerOpacity: reduced.layerOpacity,
     }, {
-      trigger: "accepted",
+      gesturing: true,
       preset: "laugh",
       transition: "0ms",
       gestureWrite: "",
@@ -825,10 +921,77 @@ Deno.test("control lane priority and reduced motion preserve the final signal", 
 async function loadFacialRig(page: Page): Promise<void> {
   await page.addStyleTag({ path: localPath(AVATAR_ASSETS.facialRigStyles.url) });
   await page.addScriptTag({ path: localPath(AVATAR_ASSETS.facialRigScript.url) });
-  await page.evaluate(() => {
+  await page.evaluate((profiles) => {
     const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
-    api.init();
+    const receipt = api.init({
+      audioProfiles: profiles,
+      silenceSrc: "/silence.mp3",
+      isAudioEnabled: () => (window as unknown as { audioEnabled?: boolean }).audioEnabled ?? true,
+    });
+    if (receipt.tag === "rejected") throw new Error(`facial rig init: ${receipt.reason}`);
     api.sync();
+  }, COMPLETE_AUDIO_PROFILES);
+}
+
+async function installResolvingAudio(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    type Listener = () => void;
+    class ResolvingAudio {
+      ended = false;
+      paused = false;
+      preload = "";
+      src: string;
+      volume = 1;
+      readonly listeners = new Map<string, Listener[]>();
+
+      constructor(src = "") {
+        this.src = src;
+        (window as unknown as { testAudio: ResolvingAudio[] }).testAudio.push(this);
+      }
+
+      addEventListener(type: string, listener: Listener): void {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+      }
+
+      removeEventListener(type: string, listener: Listener): void {
+        this.listeners.set(
+          type,
+          (this.listeners.get(type) ?? []).filter((candidate) => candidate !== listener),
+        );
+      }
+
+      load(): void {}
+      pause(): void {
+        this.paused = true;
+      }
+      play(): Promise<void> {
+        const mode = (window as unknown as { audioMode: string }).audioMode;
+        if (mode === "reject") return Promise.reject(new Error("autoplay denied"));
+        if (mode === "pending") return new Promise(() => undefined);
+        return Promise.resolve();
+      }
+
+      finish(): void {
+        this.ended = true;
+        for (const listener of this.listeners.get("ended") ?? []) listener();
+      }
+    }
+    const target = window as unknown as {
+      Audio: typeof ResolvingAudio;
+      audioEnabled: boolean;
+      audioMode: string;
+      audioNow: number;
+      audioRandom: number;
+      testAudio: ResolvingAudio[];
+    };
+    target.audioNow = 1_000;
+    target.audioEnabled = true;
+    target.audioMode = "resolve";
+    target.audioRandom = 0;
+    target.testAudio = [];
+    target.Audio = ResolvingAudio;
+    Date.now = () => target.audioNow;
+    Math.random = () => target.audioRandom;
   });
 }
 
@@ -841,6 +1004,8 @@ Deno.test("SSR rig IDs cannot create browser event attributes", async () => {
     const html = renderFacialRig({
       id: hostileId,
       label: "East",
+      matchScope: "match-1",
+      audioProfileId: "bot-test",
       reaction: null,
       precedingReaction: null,
       microReaction: null,
@@ -909,20 +1074,7 @@ Deno.test("browser runtime animates an AI turn rig without consumer coupling", a
     const page = await browser.newPage();
     await page.setContent(`
       <div class="seat is-turn is-ai">
-        <span id="avatar-rig-east" class="avatar-rig" data-rig-kind="bot"
-          data-seat-audio-probability="0"
-          data-reaction-kind="" data-reaction-expression="" data-reaction-intensity="0"
-          data-reaction-motion="" data-reaction-duration-ms="0" data-reaction-confidence="1"
-          data-reaction-voice-cue="" data-reaction-id="0"
-          data-preceding-kind="" data-preceding-expression="" data-preceding-intensity="0"
-          data-preceding-motion="" data-preceding-duration-ms="0" data-preceding-confidence="1"
-          data-preceding-voice-cue="" data-preceding-id="0"
-          data-micro-kind="" data-micro-expression="" data-micro-intensity="0"
-          data-micro-motion="" data-micro-duration-ms="0" data-micro-confidence="1"
-          data-micro-voice-cue="" data-micro-id="0">
-          <svg class="avatar-base"><g class="face-eyes"></g><g class="face-mouth"></g><g class="face-brows"></g></svg>
-          <svg class="avatar-expression"><g class="face-eyes"></g><g class="face-mouth"></g><g class="face-brows"></g></svg>
-        </span>
+        ${renderBotRig()}
       </div>
     `);
     const globalsBefore = await page.evaluate(() => Object.getOwnPropertyNames(window));
@@ -931,7 +1083,7 @@ Deno.test("browser runtime animates an AI turn rig without consumer coupling", a
       await page.evaluate(() =>
         Object.keys((window as unknown as { FacialRig: FacialRigApi }).FacialRig).sort()
       ),
-      ["control", "init", "play", "prepareSwap", "startSpeaking", "stopSpeaking", "sync"],
+      ["control", "init", "prepareSwap", "startSpeaking", "stopSpeaking", "sync"],
     );
     assertEquals(
       await page.evaluate(
@@ -940,25 +1092,24 @@ Deno.test("browser runtime animates an AI turn rig without consumer coupling", a
       ),
       ["FacialRig"],
     );
-    await page.evaluate(() => {
-      const api = (window as unknown as { FacialRig: { init(): void; sync(): void } }).FacialRig;
-      api.init();
+    await page.evaluate((profiles) => {
+      const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
+      api.init({
+        audioProfiles: profiles,
+        silenceSrc: "/silence.mp3",
+        isAudioEnabled: () => true,
+      });
       api.sync();
-    });
+    }, COMPLETE_AUDIO_PROFILES);
     await page.waitForTimeout(250);
     const idleScale = await page.locator("#avatar-rig-east").evaluate((element) =>
       (element as HTMLElement).style.getPropertyValue("--rig-breath-scale")
     );
     assertEquals(idleScale.length > 0, true);
 
-    await page.locator("#avatar-rig-east").evaluate((element) => {
-      element.setAttribute("data-reaction-kind", "TestReaction");
-      element.setAttribute("data-reaction-expression", "happiness");
-      element.setAttribute("data-reaction-intensity", "1");
-      element.setAttribute("data-reaction-motion", "pop");
-      element.setAttribute("data-reaction-duration-ms", "300");
-      element.setAttribute("data-reaction-id", "1");
-    });
+    await page.locator("#avatar-rig-east").evaluate((element, nextReaction) => {
+      element.setAttribute("data-reaction", JSON.stringify(nextReaction));
+    }, reaction(1, { durationMs: 300 }));
     await page.evaluate(() => {
       (window as unknown as { FacialRig: { sync(): void } }).FacialRig.sync();
     });
@@ -993,7 +1144,7 @@ Deno.test("reaction poses scale SSR amplitude and confidence from neutral", asyn
         id,
         amplitudeScale,
         reaction: reaction(1, { confidence, durationMs: 2_000 }),
-        microReaction: reaction(1, { confidence, durationMs: 2_000 }),
+        microReaction: reaction(2, { confidence, durationMs: 2_000 }),
       })
     ).join("");
     const transforms = await page.evaluate((html) => {
@@ -1085,6 +1236,8 @@ Deno.test("SSR output drives reactions and preserves only matching rig substrate
     const generated = renderFacialRig({
       id: "human-generated",
       label: "Generated human",
+      matchScope: "match-1",
+      audioProfileId: "bot-test",
       reaction: null,
       precedingReaction: null,
       microReaction: null,
@@ -1100,6 +1253,8 @@ Deno.test("SSR output drives reactions and preserves only matching rig substrate
     const photo = renderFacialRig({
       id: "human-photo",
       label: "Human photo",
+      matchScope: "match-1",
+      audioProfileId: "bot-test",
       reaction: null,
       precedingReaction: null,
       microReaction: null,
@@ -1134,14 +1289,14 @@ Deno.test("SSR output drives reactions and preserves only matching rig substrate
     );
 
     const incoming = renderBotRig({
-      precedingReaction: reaction(1, {
+      precedingReaction: reaction(2, {
         kind: "LeadReaction",
         expression: "surprise",
         motion: "shake",
         durationMs: 40,
       }),
-      reaction: reaction(2, { kind: "MainReaction", motion: "pop" }),
-      microReaction: reaction(1, {
+      reaction: reaction(3, { kind: "MainReaction", motion: "pop" }),
+      microReaction: reaction(4, {
         kind: "MicroReaction",
         expression: "focused",
         motion: "sink",
@@ -1149,8 +1304,8 @@ Deno.test("SSR output drives reactions and preserves only matching rig substrate
       }),
     });
     const advancedIncoming = renderBotRig({
-      reaction: reaction(3, { durationMs: 2_000 }),
-      microReaction: reaction(2, { durationMs: 2_000 }),
+      reaction: reaction(5, { durationMs: 2_000 }),
+      microReaction: reaction(6, { durationMs: 2_000 }),
     });
     const preserved = await page.evaluate((html) => {
       const api = (window as unknown as { FacialRig: FacialRigApi }).FacialRig;
@@ -1160,10 +1315,16 @@ Deno.test("SSR output drives reactions and preserves only matching rig substrate
       template.innerHTML = html;
       api.prepareSwap(template.content);
       api.sync();
+      const main = JSON.parse(live.getAttribute("data-reaction") ?? "null") as
+        | FacialReaction
+        | null;
+      const micro = JSON.parse(live.getAttribute("data-micro-reaction") ?? "null") as
+        | FacialReaction
+        | null;
       return {
         marker: live.dataset.liveMarker,
-        reactionId: live.getAttribute("data-reaction-id"),
-        microId: live.getAttribute("data-micro-id"),
+        reactionIdentity: String(main?.identity ?? ""),
+        microIdentity: String(micro?.identity ?? ""),
         reacting: live.classList.contains("is-reacting"),
         microReacting: live.classList.contains("is-micro-reacting"),
         leadMotion: live.classList.contains("motion-shake"),
@@ -1171,8 +1332,8 @@ Deno.test("SSR output drives reactions and preserves only matching rig substrate
     }, incoming);
     assertEquals(preserved, {
       marker: "preserved",
-      reactionId: "2",
-      microId: "1",
+      reactionIdentity: "reaction-3",
+      microIdentity: "reaction-4",
       reacting: true,
       microReacting: true,
       leadMotion: true,
@@ -1294,6 +1455,8 @@ Deno.test("runtime isolates incomplete rigs while advancing each reaction state"
         renderFacialRig({
           id: "photo",
           label: "Photo",
+          matchScope: "match-1",
+          audioProfileId: "bot-test",
           reaction: null,
           precedingReaction: null,
           microReaction: null,
@@ -1332,36 +1495,40 @@ Deno.test("runtime isolates incomplete rigs while advancing each reaction state"
       const rigs = [...document.querySelectorAll<HTMLElement>(".avatar-rig[id]")];
       const setReaction = (
         rig: HTMLElement,
-        prefix: "reaction" | "preceding" | "micro",
-        id: number,
+        lane: "reaction" | "preceding-reaction" | "micro-reaction",
+        identity: string,
         kind: string,
-        expression: string,
+        state: FacialReaction["state"],
       ) => {
-        rig.setAttribute(`data-${prefix}-id`, String(id));
-        rig.setAttribute(`data-${prefix}-kind`, kind);
-        rig.setAttribute(`data-${prefix}-expression`, expression);
-        rig.setAttribute(`data-${prefix}-intensity`, "3");
-        rig.setAttribute(`data-${prefix}-motion`, "shake");
-        rig.setAttribute(`data-${prefix}-duration-ms`, "30");
-        rig.setAttribute(`data-${prefix}-confidence`, "0.8");
-        rig.setAttribute(`data-${prefix}-voice-cue`, "");
+        rig.setAttribute(
+          `data-${lane}`,
+          JSON.stringify({
+            identity,
+            state,
+            kind,
+            intensity: 3,
+            motion: "shake",
+            durationMs: 30,
+            confidence: 0.8,
+          }),
+        );
       };
       for (const rig of rigs) {
-        setReaction(rig, "reaction", 1, "Main", "anger");
-        setReaction(rig, "micro", 1, "CardPlayedHigh", "focused");
+        setReaction(rig, "reaction", `${rig.id}:main:1`, "Main", "mad");
+        setReaction(rig, "micro-reaction", `${rig.id}:micro:1`, "CardPlayedHigh", "focused");
       }
       api.sync();
       api.sync();
 
       const actor = document.querySelector<HTMLElement>("#avatar-rig-actor")!;
-      setReaction(actor, "reaction", 2, "", "sadness");
-      setReaction(actor, "preceding", 2, "", "fear");
-      setReaction(actor, "micro", 2, "", "focused");
+      setReaction(actor, "reaction", "actor:main:2", "", "sad");
+      setReaction(actor, "preceding-reaction", "actor:preceding:2", "", "worry");
+      setReaction(actor, "micro-reaction", "actor:micro:2", "", "focused");
       api.sync();
-      setReaction(actor, "preceding", 3, "LeadOnly", "surprise");
+      setReaction(actor, "preceding-reaction", "actor:preceding:3", "LeadOnly", "surprised");
       api.sync();
-      setReaction(actor, "reaction", 3, "MainOnly", "sadness");
-      setReaction(actor, "micro", 3, "DecisionMadeMogu", "focused");
+      setReaction(actor, "reaction", "actor:main:3", "MainOnly", "sad");
+      setReaction(actor, "micro-reaction", "actor:micro:3", "DecisionMadeMogu", "focused");
       api.sync();
 
       api.startSpeaking("missing-rig", "gasp", 240);
@@ -1374,20 +1541,8 @@ Deno.test("runtime isolates incomplete rigs while advancing each reaction state"
       api.prepareSwap(invalid.content);
 
       const observer = document.querySelector<HTMLElement>("#avatar-rig-observer")!;
-      for (
-        const field of [
-          "expression",
-          "intensity",
-          "motion",
-          "duration-ms",
-          "confidence",
-          "voice-cue",
-        ]
-      ) {
-        observer.removeAttribute(`data-reaction-${field}`);
-      }
-      observer.setAttribute("data-reaction-id", "2");
-      observer.setAttribute("data-reaction-kind", "Defaults");
+      const observerDuration = observer.style.getPropertyValue("--reaction-duration-ms");
+      observer.setAttribute("data-reaction", '{"identity":"incomplete"}');
       observer.setAttribute("data-seat-audio-probability", "invalid");
       api.sync();
 
@@ -1402,7 +1557,8 @@ Deno.test("runtime isolates incomplete rigs while advancing each reaction state"
         anonymousReacting: document.querySelector(".avatar-rig:not([id])")?.classList
           .contains("is-reacting"),
         observerGaze: observer.style.getPropertyValue("--idle-gaze-tx") !== "",
-        observerDuration: observer.style.getPropertyValue("--reaction-duration-ms"),
+        observerUnchanged: observer.style.getPropertyValue("--reaction-duration-ms") ===
+          observerDuration,
       };
     }, renderBotRig({ id: "missing-live" }));
     assertEquals(state, {
@@ -1412,747 +1568,764 @@ Deno.test("runtime isolates incomplete rigs while advancing each reaction state"
       noLayerReacting: true,
       anonymousReacting: false,
       observerGaze: true,
-      observerDuration: "2000ms",
+      observerUnchanged: true,
     });
   } finally {
     await browser.close();
   }
 });
 
-Deno.test("voice cues are cancelable and audio admission stays bounded", async () => {
+Deno.test("atomic lifecycle keeps reconciliation silent and rejects retired-scope replay", async () => {
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
-    await page.setContent(renderBotRig());
+    const seededReaction = reaction(1, { state: "smile", durationMs: 40 });
+    await page.setContent(renderBotRig({ reaction: seededReaction }));
+    await installResolvingAudio(page);
+    await page.evaluate(() => {
+      const target = window as unknown as { semanticEvents: FacialRigSemanticAudioDetail[] };
+      target.semanticEvents = [];
+      document.addEventListener("facial-rig:voice-cue", (event) => {
+        target.semanticEvents.push(
+          (event as CustomEvent<FacialRigSemanticAudioDetail>).detail,
+        );
+      });
+    });
+    await loadFacialRig(page);
+
+    const result = await page.evaluate(async (html) => {
+      type TestAudio = Readonly<{ finish(): void }>;
+      const target = window as unknown as {
+        FacialRig: FacialRigApi;
+        audioNow: number;
+        semanticEvents: FacialRigSemanticAudioDetail[];
+        testAudio: TestAudio[];
+      };
+      const api = target.FacialRig;
+      const apply = (markup: string) => {
+        const template = document.createElement("template");
+        template.innerHTML = markup;
+        api.prepareSwap(template.content);
+        api.sync();
+      };
+      const replace = (markup: string) => {
+        const template = document.createElement("template");
+        template.innerHTML = markup;
+        document.querySelector("#avatar-rig-east")?.replaceWith(template.content);
+        api.sync();
+      };
+      const finishAudio = () => {
+        target.testAudio.at(-1)?.finish();
+        target.audioNow += 3_000;
+      };
+
+      api.sync();
+      const hydrationEvents = target.semanticEvents.length;
+      replace(html.same);
+      const replacementEvents = target.semanticEvents.length;
+      apply(html.release);
+      const releaseEvents = target.semanticEvents.length;
+      apply(html.restore);
+      const restorationEvents = target.semanticEvents.length;
+      apply(html.moved);
+      const movedEvents = target.semanticEvents.length;
+
+      const beforeConflict = document.querySelector("#avatar-rig-east")?.getAttribute(
+        "data-micro-reaction",
+      );
+      apply(html.conflict);
+      const conflictRejected = document.querySelector("#avatar-rig-east")?.getAttribute(
+        "data-micro-reaction",
+      ) === beforeConflict;
+
+      apply(html.distinct);
+      const distinctEvents = target.semanticEvents.length;
+      finishAudio();
+
+      apply(html.unknownProfile);
+      const unknownProfileRejected = document.querySelector<HTMLElement>("#avatar-rig-east")
+        ?.dataset.audioProfileId === "bot-test";
+      apply(html.correctedProfile);
+      const correctedProfileEvents = target.semanticEvents.length;
+      finishAudio();
+
+      apply(html.scopeTwo);
+      const scopeTwoEvents = target.semanticEvents.length;
+      finishAudio();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      apply(html.retiredScope);
+      const rig = document.querySelector<HTMLElement>("#avatar-rig-east")!;
+      const retiredScopeRejected = rig.dataset.matchScope === "match-2" &&
+        !rig.classList.contains("is-reacting");
+
+      const reinit = api.init({
+        audioProfiles: html.profiles,
+        silenceSrc: "/silence.mp3",
+        isAudioEnabled: () => true,
+      });
+      api.sync();
+      return {
+        hydrationEvents,
+        replacementEvents,
+        releaseEvents,
+        restorationEvents,
+        movedEvents,
+        conflictRejected,
+        distinctEvents,
+        unknownProfileRejected,
+        correctedProfileEvents,
+        scopeTwoEvents,
+        retiredScopeRejected,
+        eventsAfterReinit: target.semanticEvents.length,
+        reinit,
+      };
+    }, {
+      same: renderBotRig({ reaction: seededReaction }),
+      release: renderBotRig(),
+      restore: renderBotRig({ reaction: seededReaction }),
+      moved: renderBotRig({ microReaction: seededReaction }),
+      conflict: renderBotRig({
+        microReaction: { ...seededReaction, state: "mad" },
+      }),
+      distinct: renderBotRig({ reaction: reaction(2, { state: "smile", durationMs: 40 }) }),
+      unknownProfile: renderBotRig({
+        audioProfileId: "missing-profile",
+        reaction: reaction(3, { state: "sad", durationMs: 40 }),
+      }),
+      correctedProfile: renderBotRig({
+        reaction: reaction(3, { state: "sad", durationMs: 40 }),
+      }),
+      scopeTwo: renderBotRig({
+        matchScope: "match-2",
+        reaction: reaction(4, { state: "worry", durationMs: 40 }),
+      }),
+      retiredScope: renderBotRig({
+        matchScope: "match-1",
+        reaction: reaction(5, { state: "mad", durationMs: 40 }),
+      }),
+      profiles: COMPLETE_AUDIO_PROFILES,
+    });
+
+    assertEquals(result, {
+      hydrationEvents: 0,
+      replacementEvents: 0,
+      releaseEvents: 0,
+      restorationEvents: 0,
+      movedEvents: 0,
+      conflictRejected: true,
+      distinctEvents: 1,
+      unknownProfileRejected: true,
+      correctedProfileEvents: 2,
+      scopeTwoEvents: 3,
+      retiredScopeRejected: true,
+      eventsAfterReinit: 3,
+      reinit: { tag: "accepted" },
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("preceding and micro visuals keep order while laugh overrides state audio", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(renderBotRig({ controlBank: true }));
+    await installResolvingAudio(page);
+    await loadFacialRig(page);
+
+    const result = await page.evaluate(
+      async (markup) => {
+        const target = window as unknown as {
+          FacialRig: FacialRigApi;
+          semanticEvents: FacialRigSemanticAudioDetail[];
+        };
+        target.semanticEvents = [];
+        document.addEventListener("facial-rig:voice-cue", (event) => {
+          target.semanticEvents.push(
+            (event as CustomEvent<FacialRigSemanticAudioDetail>).detail,
+          );
+        });
+        const template = document.createElement("template");
+        template.innerHTML = markup;
+        target.FacialRig.prepareSwap(template.content);
+        target.FacialRig.sync();
+        const rig = document.querySelector<HTMLElement>("#avatar-rig-east")!;
+        const immediate = {
+          macroDuration: rig.style.getPropertyValue("--reaction-duration-ms"),
+          microDuration: rig.style.getPropertyValue("--micro-duration-ms"),
+          microActive: rig.classList.contains("is-micro-reacting"),
+          gesturing: rig.classList.contains("is-control-gesturing"),
+        };
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return {
+          immediate,
+          delayed: {
+            macroDuration: rig.style.getPropertyValue("--reaction-duration-ms"),
+            microActive: rig.classList.contains("is-micro-reacting"),
+            gesturing: rig.classList.contains("is-control-gesturing"),
+          },
+          events: target.semanticEvents.map(({ family, qualifier, src, identity }) => ({
+            family,
+            qualifier,
+            src,
+            identity: String(identity),
+          })),
+        };
+      },
+      renderBotRig({
+        precedingReaction: reaction(10, { state: "focused", durationMs: 50 }),
+        reaction: reaction(11, {
+          state: "surprised",
+          gesture: "laugh",
+          qualifier: "climactic",
+          durationMs: 160,
+        }),
+        microReaction: reaction(12, { state: "neutral", durationMs: 200 }),
+        controlBank: true,
+      }),
+    );
+
+    assertEquals(result, {
+      immediate: {
+        macroDuration: "50ms",
+        microDuration: "200ms",
+        microActive: true,
+        gesturing: false,
+      },
+      delayed: {
+        macroDuration: "160ms",
+        microActive: true,
+        gesturing: true,
+      },
+      events: [{
+        family: "Laughter",
+        qualifier: "climactic",
+        src: "/Laughter.climactic.mp3",
+        identity: "reaction-11",
+      }],
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("every admission outcome consumes the accepted atomic identity", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const photo = renderFacialRig({
+      id: "photo-admission",
+      label: "Photo",
+      matchScope: "match-1",
+      audioProfileId: "bot-test",
+      reaction: null,
+      precedingReaction: null,
+      microReaction: null,
+      personality: PERSONALITY,
+      rigKind: "human-photo",
+      src: "/photo.webp",
+      emotion: null,
+    });
+    await page.setContent(
+      ["primary", "cooldown", "cap-a", "cap-b", "cap-c"]
+        .map((id) => renderBotRig({ id }))
+        .join("") + photo,
+    );
+    await installResolvingAudio(page);
+    await loadFacialRig(page);
+
+    const result = await page.evaluate(async () => {
+      type TestAudio = Readonly<{ finish(): void }>;
+      const target = window as unknown as {
+        FacialRig: FacialRigApi;
+        audioEnabled: boolean;
+        audioMode: string;
+        audioNow: number;
+        audioRandom: number;
+        semanticEvents: FacialRigSemanticAudioDetail[];
+        testAudio: TestAudio[];
+      };
+      const api = target.FacialRig;
+      target.semanticEvents = [];
+      document.addEventListener("facial-rig:voice-cue", (event) => {
+        const detail = (event as CustomEvent<FacialRigSemanticAudioDetail>).detail;
+        target.semanticEvents.push(detail);
+        if (String(detail.identity) === "cancelled") event.preventDefault();
+      });
+      const makeReaction = (
+        identity: string,
+        state: FacialReaction["state"],
+        intensity: 1 | 2 | 3 = 3,
+      ): FacialReaction => ({
+        identity,
+        state,
+        kind: "AdmissionTest",
+        intensity,
+        motion: "pop",
+        durationMs: 30,
+        confidence: 1,
+      } as FacialReaction);
+      const deliver = (
+        rigId: string,
+        next: FacialReaction,
+      ) => {
+        const rig = document.querySelector<HTMLElement>(`#avatar-rig-${rigId}`)!;
+        rig.setAttribute("data-reaction", JSON.stringify(next));
+        api.sync();
+        return rig;
+      };
+      const release = (rigId: string) => {
+        document.querySelector<HTMLElement>(`#avatar-rig-${rigId}`)!
+          .setAttribute("data-reaction", "null");
+        api.sync();
+      };
+      const counts = () => ({
+        events: target.semanticEvents.length,
+        audio: target.testAudio.length,
+      });
+      const sameCounts = (before: ReturnType<typeof counts>) =>
+        before.events === target.semanticEvents.length && before.audio === target.testAudio.length;
+      const advance = () => target.audioNow += 3_000;
+
+      target.audioEnabled = false;
+      const muted = makeReaction("muted", "smile");
+      const mutedRig = deliver("primary", muted);
+      const muteVisualApplied = mutedRig.classList.contains("is-reacting");
+      const muteCounts = counts();
+      target.audioEnabled = true;
+      advance();
+      deliver("primary", muted);
+      const muteConsumed = sameCounts(muteCounts);
+
+      release("primary");
+      advance();
+      const cancelled = makeReaction("cancelled", "sad");
+      deliver("primary", cancelled);
+      const cancelCounts = counts();
+      advance();
+      deliver("primary", cancelled);
+      const cancelConsumed = cancelCounts.events === 1 && cancelCounts.audio === 0 &&
+        sameCounts(cancelCounts);
+
+      release("primary");
+      advance();
+      target.audioRandom = 0.999;
+      const probability = makeReaction("probability", "worry", 1);
+      deliver("primary", probability);
+      const probabilityCounts = counts();
+      target.audioRandom = 0;
+      advance();
+      deliver("primary", probability);
+      const probabilityConsumed = sameCounts(probabilityCounts);
+
+      release("primary");
+      advance();
+      target.audioMode = "reject";
+      const autoplay = makeReaction("autoplay", "mad");
+      deliver("primary", autoplay);
+      await Promise.resolve();
+      await Promise.resolve();
+      const autoplayCounts = counts();
+      advance();
+      target.audioMode = "resolve";
+      deliver("primary", autoplay);
+      const autoplayConsumed = autoplayCounts.events === 2 && autoplayCounts.audio === 1 &&
+        sameCounts(autoplayCounts);
+
+      advance();
+      const familyFirst = makeReaction("family-first", "smile", 1);
+      deliver("cooldown", familyFirst);
+      await Promise.resolve();
+      target.testAudio.at(-1)?.finish();
+      release("cooldown");
+      const familyBlocked = makeReaction("family-blocked", "smile", 1);
+      const beforeFamilyBlocked = counts();
+      deliver("cooldown", familyBlocked);
+      const familyCooldownRejected = sameCounts(beforeFamilyBlocked);
+      release("cooldown");
+      const seatBlocked = makeReaction("seat-blocked", "sad", 1);
+      const beforeSeatBlocked = counts();
+      deliver("cooldown", seatBlocked);
+      const seatCooldownRejected = sameCounts(beforeSeatBlocked);
+      advance();
+      deliver("cooldown", familyBlocked);
+      deliver("cooldown", seatBlocked);
+      const cooldownsConsumed = sameCounts(beforeSeatBlocked);
+
+      release("primary");
+      advance();
+      target.audioMode = "pending";
+      const active = makeReaction("active", "surprised");
+      deliver("primary", active);
+      const activeAudio = target.testAudio.at(-1);
+      release("primary");
+      const activeBlocked = makeReaction("active-blocked", "worry");
+      const beforeActiveBlocked = counts();
+      deliver("primary", activeBlocked);
+      const activeSeatRejected = sameCounts(beforeActiveBlocked);
+      activeAudio?.finish();
+      advance();
+      deliver("primary", activeBlocked);
+      const activeSeatConsumed = sameCounts(beforeActiveBlocked);
+
+      advance();
+      const capA = makeReaction("cap-a", "smile");
+      const capB = makeReaction("cap-b", "sad");
+      const capC = makeReaction("cap-c", "worry");
+      deliver("cap-a", capA);
+      const capAudioA = target.testAudio.at(-1);
+      deliver("cap-b", capB);
+      const capAudioB = target.testAudio.at(-1);
+      const beforeCapBlocked = counts();
+      deliver("cap-c", capC);
+      const channelCapRejected = sameCounts(beforeCapBlocked);
+      capAudioA?.finish();
+      capAudioB?.finish();
+      advance();
+      deliver("cap-c", capC);
+      const channelCapConsumed = sameCounts(beforeCapBlocked);
+
+      advance();
+      const photoReaction = makeReaction("photo-kind", "smile");
+      const photoRig = deliver("photo-admission", photoReaction);
+      const beforePhotoRetry = counts();
+      const photoVisualApplied = photoRig.classList.contains("is-reacting");
+      photoRig.dataset.rigKind = "bot";
+      deliver("photo-admission", photoReaction);
+      const rigKindConsumed = sameCounts(beforePhotoRetry);
+
+      return {
+        muteVisualApplied,
+        muteConsumed,
+        cancelConsumed,
+        probabilityConsumed,
+        autoplayConsumed,
+        familyCooldownRejected,
+        seatCooldownRejected,
+        cooldownsConsumed,
+        activeSeatRejected,
+        activeSeatConsumed,
+        channelCapRejected,
+        channelCapConsumed,
+        photoVisualApplied,
+        rigKindConsumed,
+      };
+    });
+
+    assertEquals(result, {
+      muteVisualApplied: true,
+      muteConsumed: true,
+      cancelConsumed: true,
+      probabilityConsumed: true,
+      autoplayConsumed: true,
+      familyCooldownRejected: true,
+      seatCooldownRejected: true,
+      cooldownsConsumed: true,
+      activeSeatRejected: true,
+      activeSeatConsumed: true,
+      channelCapRejected: true,
+      channelCapConsumed: true,
+      photoVisualApplied: true,
+      rigKindConsumed: true,
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+Deno.test("all browser audio and teardown failures stay nonfatal and release capacity", async () => {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.setContent(renderBotRig({ id: "fault" }));
     await page.evaluate(() => {
       type Listener = () => void;
-      class FakeAudioContext {
-        readonly destination = {};
-        resumeCalled = false;
-        sampleCalls = 0;
-        state = "running";
+      type FaultTarget = Window & typeof globalThis & {
+        faultAudio: FaultAudio[];
+        faultMode: string;
+        faultNow: number;
+      };
+      const target = window as FaultTarget;
+      class FaultAudio {
+        ended = false;
+        private preloadValue = "";
+        private srcValue: string;
+        private volumeValue = 1;
+        readonly listeners = new Map<string, Listener[]>();
+        pauseCalls = 0;
 
-        constructor() {
-          (window as unknown as { audioContexts: FakeAudioContext[] }).audioContexts.push(this);
+        constructor(src = "") {
+          if (target.faultMode === "constructor") throw new Error("constructor failure");
+          this.srcValue = src;
+          target.faultAudio.push(this);
         }
 
-        createMediaElementSource(): Readonly<{ connect(): void }> {
-          return { connect() {} };
+        get preload(): string {
+          return this.preloadValue;
+        }
+        set preload(value: string) {
+          if (target.faultMode === "preload") throw new Error("preload failure");
+          this.preloadValue = value;
+        }
+        get src(): string {
+          return this.srcValue;
+        }
+        set src(value: string) {
+          if (target.faultMode === "src") throw new Error("src failure");
+          this.srcValue = value;
+        }
+        get volume(): number {
+          return this.volumeValue;
+        }
+        set volume(value: number) {
+          if (target.faultMode === "volume") throw new Error("volume failure");
+          this.volumeValue = value;
+        }
+
+        addEventListener(type: string, listener: Listener): void {
+          if (
+            target.faultMode === "listener-ended" && type === "ended" ||
+            target.faultMode === "listener-error" && type === "error"
+          ) throw new Error("listener registration failure");
+          this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+        }
+
+        removeEventListener(type: string, listener: Listener): void {
+          this.listeners.set(
+            type,
+            (this.listeners.get(type) ?? []).filter((candidate) => candidate !== listener),
+          );
+          if (target.faultMode === "teardown") throw new Error("listener removal failure");
+        }
+
+        load(): void {
+          if (target.faultMode === "load") throw new Error("load failure");
+        }
+
+        pause(): void {
+          this.pauseCalls += 1;
+          if (target.faultMode === "teardown") throw new Error("pause failure");
+        }
+
+        play(): Promise<void> {
+          if (target.faultMode === "play-throw") throw new Error("play failure");
+          if (target.faultMode === "play-reject") {
+            return Promise.reject(new Error("autoplay failure"));
+          }
+          if (target.faultMode === "timeout" || target.faultMode === "node-removal") {
+            return new Promise(() => undefined);
+          }
+          return Promise.resolve();
+        }
+
+        fail(): void {
+          for (const listener of [...(this.listeners.get("error") ?? [])]) listener();
+        }
+
+        finish(): void {
+          this.ended = true;
+          for (const listener of [...(this.listeners.get("ended") ?? [])]) listener();
+        }
+
+        listenerCount(): number {
+          return [...this.listeners.values()].reduce((total, listeners) => {
+            return total + listeners.length;
+          }, 0);
+        }
+      }
+
+      class FaultAudioContext {
+        readonly destination = {};
+        state = "running";
+
+        createMediaElementSource(): {
+          connect(): void;
+          disconnect(): void;
+        } {
+          if (target.faultMode === "analyser-source") throw new Error("source failure");
+          return {
+            connect() {
+              if (target.faultMode === "analyser-connect") throw new Error("connect failure");
+            },
+            disconnect() {
+              if (target.faultMode === "teardown") throw new Error("disconnect failure");
+            },
+          };
         }
 
         createAnalyser(): {
           connect(): void;
+          disconnect(): void;
           fftSize: number;
           frequencyBinCount: number;
           getByteTimeDomainData(buffer: Uint8Array): void;
           smoothingTimeConstant: number;
         } {
+          if (target.faultMode === "analyser-create") throw new Error("analyser failure");
           return {
-            connect() {},
+            connect() {
+              if (target.faultMode === "analyser-connect") throw new Error("connect failure");
+            },
+            disconnect() {
+              if (target.faultMode === "teardown") throw new Error("disconnect failure");
+            },
             fftSize: 0,
             frequencyBinCount: 8,
-            getByteTimeDomainData: (buffer) => {
-              this.sampleCalls += 1;
-              buffer.fill(144);
+            getByteTimeDomainData(buffer: Uint8Array) {
+              if (target.faultMode === "analyser-sample") throw new Error("sample failure");
+              buffer.fill(128);
             },
             smoothingTimeConstant: 0,
           };
         }
 
         resume(): Promise<void> {
-          this.resumeCalled = true;
-          this.state = "running";
           return Promise.resolve();
         }
       }
 
-      class FakeAudio {
-        ended = false;
-        loaded = false;
-        played = false;
-        preload = "";
-        src: string;
-        volume = 1;
-        readonly listeners = new Map<string, Listener[]>();
-
-        constructor(src = "") {
-          this.src = src;
-          (window as unknown as { audioInstances: FakeAudio[] }).audioInstances.push(this);
-        }
-
-        addEventListener(type: string, listener: Listener): void {
-          const listeners = this.listeners.get(type) ?? [];
-          listeners.push(listener);
-          this.listeners.set(type, listeners);
-        }
-
-        play(): Promise<void> | undefined {
-          this.played = true;
-          if (this.src === "/challenge.mp3") return undefined;
-          return Promise.resolve();
-        }
-
-        pause(): void {}
-        load(): void {
-          this.loaded = true;
-        }
-
-        finish(): void {
-          this.ended = true;
-          for (const listener of this.listeners.get("ended") ?? []) listener();
-        }
-
-        fail(): void {
-          for (const listener of this.listeners.get("error") ?? []) listener();
-        }
-      }
-
-      const target = window as unknown as {
-        Audio: typeof FakeAudio;
-        AudioContext: typeof FakeAudioContext;
-        audioContexts: FakeAudioContext[];
-        audioEnabled: boolean;
-        audioInstances: FakeAudio[];
-        now: number;
-      };
-      target.audioContexts = [];
-      target.audioEnabled = true;
-      target.audioInstances = [];
-      target.now = 1_000;
-      target.Audio = FakeAudio;
-      target.AudioContext = FakeAudioContext;
-      Date.now = () => target.now;
+      target.faultAudio = [];
+      target.faultMode = "ready";
+      target.faultNow = 1_000;
+      target.Audio = FaultAudio as unknown as typeof Audio;
+      target.AudioContext = FaultAudioContext as unknown as typeof AudioContext;
+      Date.now = () => target.faultNow;
       Math.random = () => 0;
+      const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
+      globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+        const boundedDelay = delay === 2_000 || delay === 2_400 || delay === 3_200 ? 25 : delay;
+        return nativeSetTimeout(handler, boundedDelay, ...args);
+      }) as typeof globalThis.setTimeout;
     });
-    await page.addScriptTag({ path: localPath(AVATAR_ASSETS.facialRigScript.url) });
+    await loadFacialRig(page);
 
-    const result = await page.evaluate(async () => {
-      type FakeAudio = Readonly<{
+    const result = await page.evaluate(async (replacementMarkup) => {
+      type FaultAudio = Readonly<{
         fail(): void;
-        loaded: boolean;
-        played: boolean;
-        preload: string;
-        src: string;
         finish(): void;
+        listenerCount(): number;
+        pauseCalls: number;
       }>;
-      type VoiceDetail = Readonly<{ cue: string; src: string; seatId: string }>;
       const target = window as unknown as {
         FacialRig: FacialRigApi;
-        audioContexts: Array<{
-          resumeCalled: boolean;
-          sampleCalls: number;
-          state: string;
-        }>;
-        audioEnabled: boolean;
-        audioInstances: FakeAudio[];
-        now: number;
+        faultAudio: FaultAudio[];
+        faultMode: string;
+        faultNow: number;
+        semanticEvents: FacialRigSemanticAudioDetail[];
       };
-      const rig = document.querySelector("#avatar-rig-east")!;
-      const events: VoiceDetail[] = [];
-      const cancelFirst = (event: Event) => {
-        events.push((event as CustomEvent<VoiceDetail>).detail);
-        event.preventDefault();
-        rig.removeEventListener("facial-rig:voice-cue", cancelFirst);
+      const api = target.FacialRig;
+      target.semanticEvents = [];
+      document.addEventListener("facial-rig:voice-cue", (event) => {
+        target.semanticEvents.push(
+          (event as CustomEvent<FacialRigSemanticAudioDetail>).detail,
+        );
+      });
+      const states = ["smile", "sad", "worry", "mad", "surprised"] as const;
+      let nextState = 0;
+      const visualSettled: boolean[] = [];
+      const deliver = async (identity: string, mode: string) => {
+        const rig = document.querySelector<HTMLElement>("#avatar-rig-fault")!;
+        rig.setAttribute("data-reaction", "null");
+        api.sync();
+        target.faultNow += 3_000;
+        target.faultMode = mode;
+        const next: FacialReaction = {
+          identity,
+          state: states[nextState++ % states.length]!,
+          kind: "FailureTest",
+          intensity: 3,
+          motion: "pop",
+          durationMs: 20,
+          confidence: 1,
+        } as FacialReaction;
+        rig.setAttribute("data-reaction", JSON.stringify(next));
+        api.sync();
+        await Promise.resolve();
+        await Promise.resolve();
+        return rig;
       };
-      rig.addEventListener("facial-rig:voice-cue", cancelFirst);
-      rig.addEventListener("facial-rig:voice-cue", (event) => {
-        if (!event.defaultPrevented) events.push((event as CustomEvent<VoiceDetail>).detail);
-      });
-
-      target.FacialRig.init({
-        audioAssets: {
-          gasp: "/gasp.mp3",
-          laugh: "/laugh.mp3",
-          laughClimactic: "/laugh-big.mp3",
-          sigh: "/sigh.mp3",
-          groan: "/groan.mp3",
-          challenge: "/challenge.mp3",
-        },
-        silenceSrc: "/silence.mp3",
-        isAudioEnabled: () => target.audioEnabled,
-      });
-      const request = (cue: string, seatId: string) => ({
-        cue,
-        intensity: 1,
-        rigKind: "bot",
-        seatId,
-        rigId: "avatar-rig-east",
-        seatAudioProbability: 1,
-      });
-      target.audioEnabled = false;
-      target.FacialRig.play(request("gasp", "disabled"));
-      target.audioEnabled = true;
-      target.FacialRig.play(request("", "empty-cue"));
-      target.FacialRig.play({ ...request("gasp", "unknown"), rigKind: "unknown" });
-      target.FacialRig.play({ ...request("gasp", "photo"), rigKind: "human-photo" });
-      target.FacialRig.play(request("missing", "missing-asset"));
-      target.FacialRig.play(request("laugh", "east"));
-      target.FacialRig.play(request("gasp", "west"));
-      target.FacialRig.play(request("challenge", "north"));
-      target.FacialRig.play(request("sigh", "west"));
-      target.FacialRig.play(request("groan", "south"));
-      await Promise.resolve();
-      await new Promise(requestAnimationFrame);
-
-      const admitted = target.audioInstances.length;
-      const speaking = rig.classList.contains("is-speaking");
-      for (const audio of target.audioInstances) audio.finish();
-
-      target.FacialRig.play(request("groan", "north"));
-      target.FacialRig.play(request("gasp", "east"));
-      target.FacialRig.play({ ...request("laugh", "south"), intensity: 3 });
-      await Promise.resolve();
-      const afterCooldownChecks = target.audioInstances.length;
-      const climacticSource = target.audioInstances.at(-1)?.src;
-      target.audioInstances.at(-1)?.finish();
-
-      Math.random = () => 0.999;
-      target.FacialRig.play(request("sigh", "random-loss"));
-      await Promise.resolve();
-      const afterFailedRoll = target.audioInstances.length;
-      const voiceInstances = target.audioInstances.length;
-
-      Math.random = () => 0;
-      target.now = 4_000;
-      target.FacialRig.play(request("gasp", "cooldown-expired"));
-      await Promise.resolve();
-      target.audioInstances.at(-1)?.finish();
-      target.now = 7_000;
-      target.FacialRig.play({
-        cue: "groan",
-        intensity: 0,
-        rigKind: "bot",
-        rigId: "",
-      });
-      await Promise.resolve();
-      target.audioInstances.at(-1)?.finish();
-      const decisionMatrixInstances = target.audioInstances.length;
-
-      target.now = 10_000;
-      target.FacialRig.play({ ...request("gasp", "failed"), rigId: "" });
-      target.audioInstances.at(-1)?.fail();
-      await new Promise(requestAnimationFrame);
-      await new Promise(requestAnimationFrame);
-      const samplesAfterFailure = target.audioContexts[0]?.sampleCalls ?? 0;
-      await new Promise(requestAnimationFrame);
-      const analyserStoppedAfterFailure =
-        (target.audioContexts[0]?.sampleCalls ?? 0) === samplesAfterFailure;
-
-      if (target.audioContexts[0]) target.audioContexts[0].state = "suspended";
-      document.body.click();
-      await Promise.resolve();
-      return {
-        admitted,
-        afterCooldownChecks,
-        afterFailedRoll,
-        cues: events.map((event) => event.cue),
-        canceledCreatedAudio: events[0]?.src === "/laugh.mp3" && admitted === 2,
-        climacticSource,
-        preloaded: target.audioInstances.filter((audio) =>
-          audio.preload === "auto" && audio.loaded
-        ).length,
-        silencePlayed: target.audioInstances.some((audio) =>
-          audio.src === "/silence.mp3" && audio.played
-        ),
-        speaking,
-        speakingAfterFinish: rig.classList.contains("is-speaking"),
-        analyserSampled: (target.audioContexts[0]?.sampleCalls ?? 0) > 0,
-        analyserStoppedAfterFailure,
-        contextResumed: target.audioContexts[0]?.resumeCalled ?? false,
-        decisionMatrixInstances,
-        voiceInstances,
+      const finishAndObserve = async (rig: HTMLElement) => {
+        await new Promise((resolve) => setTimeout(resolve, 35));
+        visualSettled.push(!rig.classList.contains("is-reacting"));
       };
-    });
 
-    assertEquals(result, {
-      admitted: 2,
-      afterCooldownChecks: 3,
-      afterFailedRoll: 3,
-      cues: ["laugh", "gasp", "challenge", "laugh", "gasp"],
-      canceledCreatedAudio: true,
-      climacticSource: "/laugh-big.mp3",
-      preloaded: 7,
-      silencePlayed: true,
-      speaking: true,
-      speakingAfterFinish: false,
-      analyserSampled: true,
-      analyserStoppedAfterFailure: true,
-      contextResumed: true,
-      decisionMatrixInstances: 5,
-      voiceInstances: 3,
-    });
-  } finally {
-    await browser.close();
-  }
-});
-
-Deno.test("voice admission preserves legacy probabilities and seat and cue gates", async () => {
-  const browser = await launchBrowser();
-  try {
-    const page = await browser.newPage();
-    await page.setContent(renderBotRig({ id: "confidence" }));
-    await page.evaluate(() => {
-      type Listener = () => void;
-      class PolicyAudio {
-        ended = false;
-        preload = "";
-        src: string;
-        volume = 1;
-        readonly listeners = new Map<string, Listener[]>();
-
-        constructor(src = "") {
-          this.src = src;
-          (window as unknown as { policyAudio: PolicyAudio[] }).policyAudio.push(this);
-        }
-
-        addEventListener(type: string, listener: Listener): void {
-          const listeners = this.listeners.get(type) ?? [];
-          listeners.push(listener);
-          this.listeners.set(type, listeners);
-        }
-
-        load(): void {}
-        pause(): void {}
-        play(): undefined {
-          return undefined;
-        }
-
-        finish(): void {
-          if (this.ended) return;
-          this.ended = true;
-          for (const listener of this.listeners.get("ended") ?? []) listener();
-        }
+      for (
+        const mode of [
+          "constructor",
+          "preload",
+          "src",
+          "volume",
+          "listener-ended",
+          "listener-error",
+          "load",
+          "play-throw",
+          "play-reject",
+        ]
+      ) {
+        const rig = await deliver(`failure:${mode}`, mode);
+        await finishAndObserve(rig);
       }
 
-      const target = window as unknown as {
-        Audio: typeof PolicyAudio;
-        now: number;
-        policyAudio: PolicyAudio[];
-        randomSample: number;
-      };
-      target.now = 1_000;
-      target.policyAudio = [];
-      target.randomSample = 0;
-      target.Audio = PolicyAudio;
-      Date.now = () => target.now;
-      Math.random = () => target.randomSample;
-    });
-    await page.addScriptTag({ path: localPath(AVATAR_ASSETS.facialRigScript.url) });
+      let rig = await deliver("failure:media-error", "media-error");
+      target.faultAudio.at(-1)?.fail();
+      await finishAndObserve(rig);
 
-    const result = await page.evaluate(() => {
-      type PolicyAudio = Readonly<{ finish(): void }>;
-      const target = window as unknown as {
-        FacialRig: FacialRigApi;
-        now: number;
-        policyAudio: PolicyAudio[];
-        randomSample: number;
-      };
-      target.FacialRig.init({
-        audioAssets: {
-          gasp: "/gasp.mp3",
-          laugh: "/laugh.mp3",
-          laughClimactic: "/laugh-big.mp3",
-          sigh: "/sigh.mp3",
-          groan: "/groan.mp3",
-        },
-        isAudioEnabled: () => true,
-      });
-      target.FacialRig.sync();
-      const play = (
-        cue: string,
-        intensity: number,
-        rigKind: string,
-        seatId: string,
-        rigId = "",
-      ) => {
-        target.FacialRig.play({
-          cue,
-          intensity,
-          rigKind,
-          rigId,
-          seatId,
-          seatAudioProbability: 1,
-        });
-      };
-      const finishAll = () => {
-        for (const audio of target.policyAudio) audio.finish();
-      };
+      rig = await deliver("failure:timeout", "timeout");
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      await finishAndObserve(rig);
 
-      target.randomSample = 0.1;
-      play("gasp", 1, "human-generated", "human");
-      const lowHumanCreated = target.policyAudio.length;
-      finishAll();
+      for (
+        const mode of [
+          "analyser-source",
+          "analyser-create",
+          "analyser-connect",
+          "analyser-sample",
+        ]
+      ) {
+        rig = await deliver(`failure:${mode}`, mode);
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        target.faultAudio.at(-1)?.finish();
+        await finishAndObserve(rig);
+      }
 
-      target.randomSample = 0;
-      target.now = 6_000;
-      const activeStart = target.policyAudio.length;
-      play("laugh", 3, "bot", "active-seat");
-      target.now = 8_501;
-      play("gasp", 1, "bot", "active-seat");
-      const sameSeatWhileActive = target.policyAudio.length - activeStart;
-      finishAll();
+      rig = await deliver("failure:teardown", "teardown");
+      await new Promise(requestAnimationFrame);
+      target.faultAudio.at(-1)?.fail();
+      await finishAndObserve(rig);
 
-      target.now = 10_000;
-      const gapStart = target.policyAudio.length;
-      play("gasp", 1, "bot", "gap-seat");
-      target.policyAudio.at(-1)?.finish();
-      target.now = 10_700;
-      play("laugh", 1, "bot", "gap-seat");
-      const afterLegacySeatGap = target.policyAudio.length - gapStart;
-      finishAll();
-
-      target.now = 20_000;
-      const cueStart = target.policyAudio.length;
-      play("sigh", 1, "bot", "west");
-      target.policyAudio.at(-1)?.finish();
-      target.now = 20_100;
-      play("sigh", 1, "bot", "north");
-      const sameCueAcrossSeats = target.policyAudio.length - cueStart;
-      finishAll();
-
-      target.now = 30_000;
-      const confidenceStart = target.policyAudio.length;
-      const rig = document.querySelector<HTMLElement>("#avatar-rig-confidence")!;
-      rig.dataset.reactionKind = "ConfidenceProbe";
-      rig.dataset.reactionExpression = "happiness";
-      rig.dataset.reactionIntensity = "1";
-      rig.dataset.reactionMotion = "pop";
-      rig.dataset.reactionDurationMs = "77";
-      rig.dataset.reactionConfidence = "0";
-      rig.dataset.reactionVoiceCue = "groan";
-      rig.dataset.reactionId = "1";
-      target.FacialRig.sync();
-      const confidenceZeroCreated = target.policyAudio.length - confidenceStart;
+      rig = await deliver("failure:node-removal", "node-removal");
+      const nodeAudio = target.faultAudio.at(-1);
+      rig.remove();
+      api.sync();
+      const template = document.createElement("template");
+      template.innerHTML = replacementMarkup;
+      document.body.append(template.content);
+      api.sync();
+      target.faultMode = "ready";
+      const recovered = await deliver("failure:recovered", "ready");
+      target.faultAudio.at(-1)?.finish();
+      await finishAndObserve(recovered);
 
       return {
-        afterLegacySeatGap,
-        confidenceZeroCreated,
-        lowHumanCreated,
-        sameCueAcrossSeats,
-        sameSeatWhileActive,
+        eventCount: target.semanticEvents.length,
+        allVisualsSettled: visualSettled.every(Boolean),
+        allListenersRemoved: target.faultAudio.every((audio) => audio.listenerCount() === 0),
+        nodeRemovalPaused: (nodeAudio?.pauseCalls ?? 0) > 0,
+        recovered: target.semanticEvents.at(-1)?.identity === "failure:recovered",
       };
-    });
+    }, renderBotRig({ id: "fault" }));
 
+    assertEquals(pageErrors, []);
     assertEquals(result, {
-      afterLegacySeatGap: 2,
-      confidenceZeroCreated: 0,
-      lowHumanCreated: 0,
-      sameCueAcrossSeats: 1,
-      sameSeatWhileActive: 1,
-    });
-  } finally {
-    await browser.close();
-  }
-});
-
-Deno.test("voice timing follows cue duration and resolved playback", async () => {
-  const browser = await launchBrowser();
-  try {
-    const page = await browser.newPage();
-    await page.setContent(renderBotRig({ id: "playback" }));
-    await page.evaluate(() => {
-      type Listener = () => void;
-      class TimingAudioContext {
-        readonly destination = {};
-        state = "running";
-
-        constructor() {
-          (window as unknown as { timingContextCount: number }).timingContextCount += 1;
-        }
-
-        createMediaElementSource(): Readonly<{ connect(): void }> {
-          return { connect() {} };
-        }
-
-        createAnalyser(): {
-          connect(): void;
-          fftSize: number;
-          frequencyBinCount: number;
-          getByteTimeDomainData(buffer: Uint8Array): void;
-          smoothingTimeConstant: number;
-        } {
-          return {
-            connect() {},
-            fftSize: 0,
-            frequencyBinCount: 8,
-            getByteTimeDomainData: (buffer) => buffer.fill(128),
-            smoothingTimeConstant: 0,
-          };
-        }
-
-        resume(): Promise<void> {
-          return Promise.resolve();
-        }
-      }
-
-      class TimingAudio {
-        ended = false;
-        preload = "";
-        resolvePlay: (() => void) | null = null;
-        src: string;
-        volume = 1;
-        readonly listeners = new Map<string, Listener[]>();
-
-        constructor(src = "") {
-          this.src = src;
-          (window as unknown as { timingAudio: TimingAudio[] }).timingAudio.push(this);
-        }
-
-        addEventListener(type: string, listener: Listener): void {
-          const listeners = this.listeners.get(type) ?? [];
-          listeners.push(listener);
-          this.listeners.set(type, listeners);
-        }
-
-        load(): void {}
-        pause(): void {}
-        play(): Promise<void> | undefined {
-          const target = window as unknown as { deferNextPlay: boolean };
-          if (!target.deferNextPlay) return undefined;
-          target.deferNextPlay = false;
-          return new Promise((resolve) => {
-            this.resolvePlay = resolve;
-          });
-        }
-
-        finish(): void {
-          if (this.ended) return;
-          this.ended = true;
-          for (const listener of this.listeners.get("ended") ?? []) listener();
-        }
-      }
-
-      const target = window as unknown as {
-        Audio: typeof TimingAudio;
-        AudioContext: typeof TimingAudioContext;
-        deferNextPlay: boolean;
-        now: number;
-        timingAudio: TimingAudio[];
-        timingContextCount: number;
-      };
-      target.deferNextPlay = false;
-      target.now = 1_000;
-      target.timingAudio = [];
-      target.timingContextCount = 0;
-      target.Audio = TimingAudio;
-      target.AudioContext = TimingAudioContext;
-      Date.now = () => target.now;
-      Math.random = () => 0;
-    });
-    await page.addScriptTag({ path: localPath(AVATAR_ASSETS.facialRigScript.url) });
-
-    const result = await page.evaluate(async () => {
-      type TimingAudio = Readonly<{
-        finish(): void;
-        resolvePlay: (() => void) | null;
-      }>;
-      type VoiceDetail = Readonly<{ cue: string; durationMs: number; intensity: number }>;
-      const target = window as unknown as {
-        FacialRig: FacialRigApi;
-        deferNextPlay: boolean;
-        now: number;
-        timingAudio: TimingAudio[];
-        timingContextCount: number;
-      };
-      const rig = document.querySelector<HTMLElement>("#avatar-rig-playback")!;
-      const events: VoiceDetail[] = [];
-      rig.addEventListener("facial-rig:voice-cue", (event) => {
-        events.push((event as CustomEvent<VoiceDetail>).detail);
-      });
-      target.FacialRig.init({
-        audioAssets: {
-          gasp: "/gasp.mp3",
-          laugh: "/laugh.mp3",
-          laughClimactic: "/laugh-big.mp3",
-          sigh: "/sigh.mp3",
-          groan: "/groan.mp3",
-          challenge: "/challenge.mp3",
-          custom: "/custom.mp3",
-        },
-        isAudioEnabled: () => true,
-      });
-      target.FacialRig.sync();
-      const play = (cue: string, intensity: number, seatId: string) => {
-        target.FacialRig.play({
-          cue,
-          intensity,
-          rigKind: "bot",
-          rigId: "avatar-rig-playback",
-          seatId,
-          seatAudioProbability: 1,
-        });
-      };
-
-      target.deferNextPlay = true;
-      play("gasp", 1, "pending");
-      const beforeResolve = {
-        analyserContexts: target.timingContextCount,
-        speaking: rig.classList.contains("is-speaking"),
-      };
-      target.timingAudio.at(-1)?.resolvePlay?.();
-      await Promise.resolve();
-      await Promise.resolve();
-      const afterResolve = {
-        analyserContexts: target.timingContextCount,
-        speaking: rig.classList.contains("is-speaking"),
-      };
-      target.timingAudio.at(-1)?.finish();
-
-      const cases = [
-        ["laugh", 1, "laugh"],
-        ["sigh", 1, "sigh"],
-        ["groan", 1, "groan"],
-        ["challenge", 1, "challenge"],
-        ["laugh", 3, "climactic"],
-        ["custom", 2, "fallback"],
-      ] as const;
-      for (const [cue, intensity, seatId] of cases) {
-        target.now += 3_000;
-        play(cue, intensity, seatId);
-        target.timingAudio.at(-1)?.finish();
-      }
-
-      target.now += 3_000;
-      rig.dataset.reactionKind = "DurationProbe";
-      rig.dataset.reactionExpression = "happiness";
-      rig.dataset.reactionIntensity = "1";
-      rig.dataset.reactionMotion = "pop";
-      rig.dataset.reactionDurationMs = "77";
-      rig.dataset.reactionConfidence = "1";
-      rig.dataset.reactionVoiceCue = "gasp";
-      rig.dataset.reactionId = "1";
-      target.FacialRig.sync();
-      target.timingAudio.at(-1)?.finish();
-
-      return {
-        afterResolve,
-        beforeResolve,
-        durations: events.map(({ cue, durationMs, intensity }) => ({
-          cue,
-          durationMs,
-          intensity,
-        })),
-      };
-    });
-
-    assertEquals(result, {
-      afterResolve: { analyserContexts: 1, speaking: true },
-      beforeResolve: { analyserContexts: 0, speaking: false },
-      durations: [
-        { cue: "gasp", durationMs: 1_800, intensity: 1 },
-        { cue: "laugh", durationMs: 945, intensity: 1 },
-        { cue: "sigh", durationMs: 1_800, intensity: 1 },
-        { cue: "groan", durationMs: 1_800, intensity: 1 },
-        { cue: "challenge", durationMs: 1_800, intensity: 1 },
-        { cue: "laugh", durationMs: 1_800, intensity: 3 },
-        { cue: "custom", durationMs: 2_400, intensity: 2 },
-        { cue: "gasp", durationMs: 1_800, intensity: 1 },
-      ],
-    });
-  } finally {
-    await browser.close();
-  }
-});
-
-Deno.test("stalled audio releases channel capacity at the legacy timeout bound", async () => {
-  const browser = await launchBrowser();
-  try {
-    const page = await browser.newPage();
-    await page.setContent("");
-    await page.evaluate(() => {
-      type TimerEntry = { callback: () => void; cleared: boolean; delayMs: number };
-      class StalledAudio {
-        ended = false;
-        paused = false;
-        preload = "";
-        src: string;
-        volume = 1;
-
-        constructor(src = "") {
-          this.src = src;
-          (window as unknown as { stalledAudio: StalledAudio[] }).stalledAudio.push(this);
-        }
-
-        addEventListener(): void {}
-        load(): void {}
-        pause(): void {
-          this.paused = true;
-        }
-        play(): Promise<void> {
-          return new Promise(() => undefined);
-        }
-      }
-
-      const target = window as unknown as {
-        Audio: typeof StalledAudio;
-        now: number;
-        stalledAudio: StalledAudio[];
-        timers: TimerEntry[];
-      };
-      target.now = 1_000;
-      target.stalledAudio = [];
-      target.timers = [];
-      target.Audio = StalledAudio;
-      Date.now = () => target.now;
-      Math.random = () => 0;
-      globalThis.setTimeout = ((callback: TimerHandler, delayMs = 0) => {
-        if (typeof callback !== "function") throw new Error("unexpected string timer");
-        target.timers.push({ callback: callback as () => void, cleared: false, delayMs });
-        return target.timers.length;
-      }) as typeof window.setTimeout;
-      globalThis.clearTimeout = ((timerId: number | undefined) => {
-        const timer = timerId === undefined ? undefined : target.timers[timerId - 1];
-        if (timer !== undefined) timer.cleared = true;
-      }) as typeof window.clearTimeout;
-    });
-    await page.addScriptTag({ path: localPath(AVATAR_ASSETS.facialRigScript.url) });
-
-    const result = await page.evaluate(() => {
-      type TimerEntry = { callback: () => void; cleared: boolean; delayMs: number };
-      type StalledAudio = Readonly<{ paused: boolean }>;
-      const target = window as unknown as {
-        FacialRig: FacialRigApi;
-        now: number;
-        stalledAudio: StalledAudio[];
-        timers: TimerEntry[];
-      };
-      target.FacialRig.init({
-        audioAssets: {
-          challenge: "/challenge.mp3",
-          gasp: "/gasp.mp3",
-          groan: "/groan.mp3",
-        },
-        isAudioEnabled: () => true,
-      });
-      const request = (cue: string, seatId: string) => ({
-        cue,
-        intensity: 1,
-        rigKind: "bot",
-        rigId: "",
-        seatId,
-        seatAudioProbability: 1,
-      });
-      target.FacialRig.play(request("gasp", "east"));
-      target.FacialRig.play(request("groan", "west"));
-      target.FacialRig.play(request("challenge", "blocked"));
-      const createdBeforeTimeout = target.stalledAudio.length;
-      const watchdogs = target.timers.filter((timer) => timer.delayMs === 2_000);
-      for (const watchdog of watchdogs) watchdog.callback();
-      target.now = 4_000;
-      target.FacialRig.play(request("gasp", "released"));
-      return {
-        createdBeforeTimeout,
-        createdAfterTimeout: target.stalledAudio.length,
-        paused: target.stalledAudio.map((audio) => audio.paused),
-        watchdogDelays: watchdogs.map((timer) => timer.delayMs),
-      };
-    });
-
-    assertEquals(result, {
-      createdBeforeTimeout: 2,
-      createdAfterTimeout: 3,
-      paused: [true, true, false],
-      watchdogDelays: [2_000, 2_000],
+      eventCount: 18,
+      allVisualsSettled: true,
+      allListenersRemoved: true,
+      nodeRemovalPaused: true,
+      recovered: true,
     });
   } finally {
     await browser.close();
@@ -2278,7 +2451,7 @@ Deno.test("speaking fades cleanly and reduced motion suppresses runtime feature 
   }
 });
 
-Deno.test("runtime schedules autonomous work only for connected animated rigs", async () => {
+Deno.test("runtime installation schedules no autonomous work before init", async () => {
   const browser = await launchBrowser();
   try {
     const observeScheduling = async (html: string, detach = false) => {
@@ -2329,8 +2502,8 @@ Deno.test("runtime schedules autonomous work only for connected animated rigs", 
     const empty = await observeScheduling("");
 
     assertEquals(bot, {
-      scheduledAtStart: { frames: 1, timers: 1 },
-      timersAfterDetach: 1,
+      scheduledAtStart: { frames: 0, timers: 0 },
+      timersAfterDetach: 0,
     });
     assertEquals(photo.scheduledAtStart, { frames: 0, timers: 0 });
     assertEquals(empty.scheduledAtStart, { frames: 0, timers: 0 });
@@ -2502,6 +2675,8 @@ Deno.test("controlled preset contact sheet stays visually deterministic at DPR 2
       renderFacialRig({
         id: `visual-${preset}`,
         label: preset,
+        matchScope: "contact-sheet",
+        audioProfileId: "bot-test",
         reaction: null,
         precedingReaction: null,
         microReaction: null,

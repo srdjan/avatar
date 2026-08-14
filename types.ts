@@ -170,17 +170,6 @@ export type CharacterAudioProfile = Readonly<
 
 export type CharacterAudioProfileCatalog = Readonly<Record<string, CharacterAudioProfile>>;
 
-export type ReactionSpec = Readonly<{
-  expression: RigExpression;
-  intensity: RigIntensity;
-  motion: RigMotion;
-  voiceCue: "gasp" | "laugh" | "sigh" | "groan" | "challenge";
-  durationMs: number;
-  confidence?: number;
-  id: number;
-  kind?: string;
-}>;
-
 export type RigPersonality = Readonly<{
   amplitudeScale: number;
   durationScale: number;
@@ -190,10 +179,6 @@ export type RigPersonality = Readonly<{
 export const RIG_CONTROL_PRESETS = FACIAL_REACTION_STATES;
 
 export type RigControlPreset = FacialReactionState;
-
-export const RIG_CONTROL_GESTURES = FACIAL_REACTION_GESTURES;
-
-export type RigControlGesture = FacialReactionGesture;
 
 export const RIG_CONTROL_FEATURES = [
   "browInnerRaise",
@@ -226,15 +211,6 @@ export type RigControlCommand =
       preset: RigControlPreset;
       features?: RigControlFeatureValues;
       transitionMs?: number;
-    }
-  >
-  | Readonly<
-    & RigControlEnvelope
-    & {
-      tag: "trigger";
-      gesture: RigControlGesture;
-      intensity?: number;
-      durationMs?: number;
     }
   >
   | Readonly<
@@ -281,7 +257,7 @@ export type RigControlReceipt =
 
 export const RIG_CONTROL_ARTWORK = [
   ...RIG_CONTROL_PRESETS,
-  ...RIG_CONTROL_GESTURES,
+  ...FACIAL_REACTION_GESTURES,
 ] as const;
 
 export type RigControlArtwork = (typeof RIG_CONTROL_ARTWORK)[number];
@@ -296,11 +272,42 @@ export type RigControlBank =
     layers: Readonly<Record<RigControlArtwork, string>>;
   }>;
 
+export type FacialRigInitConfig = Readonly<{
+  audioProfiles: CharacterAudioProfileCatalog;
+  silenceSrc: string;
+  isAudioEnabled: () => boolean;
+}>;
+
+export type FacialRigInitReceipt =
+  | Readonly<{ tag: "accepted" }>
+  | Readonly<{
+    tag: "rejected";
+    reason: "invalid-config" | "invalid-profile-catalog";
+  }>;
+
+export type FacialRigSemanticAudioDetail = Readonly<{
+  family: SemanticAudioFamily;
+  qualifier: LaughterQualifier | null;
+  profileId: CharacterAudioProfileId;
+  identity: FacialReactionIdentity;
+  src: string;
+  gain: number;
+  state: FacialReactionState;
+  gesture: FacialReactionGesture | null;
+  kind: string;
+  intensity: RigIntensity;
+  confidence: number;
+  durationMs: number;
+  rigKind: RigKind;
+  rigId: string;
+  seatId: string;
+  seatAudioProbability: number;
+}>;
+
 export type FacialRigApi = Readonly<{
-  init(config?: Readonly<Record<string, unknown>>): void;
+  init(config: FacialRigInitConfig): FacialRigInitReceipt;
   prepareSwap(fragment: unknown): void;
   sync(): void;
-  play(request: Readonly<Record<string, unknown>>): void;
   startSpeaking(rigId: string, cue: string, durationMs: number): void;
   stopSpeaking(rigId: string): void;
   control(command: RigControlCommand): RigControlReceipt;

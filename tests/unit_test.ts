@@ -12,7 +12,8 @@ import {
   type BotAvatarProfileCatalog,
   BUILT_IN_BOT_PROFILES,
   createAvatarGenerator,
-  type ReactionSpec,
+  type FacialReaction,
+  parseFacialReactionIdentity,
 } from "@srdjan/avatar";
 import {
   avataaarsPreset,
@@ -402,6 +403,8 @@ Deno.test("SSR renders each avatar ADT branch and escapes caller text", () => {
   const common = {
     id: "east",
     label: 'East <bot> "alert"',
+    matchScope: "match-1",
+    audioProfileId: "bot-east",
     reaction: null,
     precedingReaction: null,
     microReaction: null,
@@ -417,14 +420,10 @@ Deno.test("SSR renders each avatar ADT branch and escapes caller text", () => {
     baseSvg: bot.src,
     expressionSvg: bot.emotions.happy,
     microSvg: bot.emotions.focused,
-    reactionBotEmotion: "happy",
-    microBotEmotion: "dizzy",
   });
   assert(botHtml.includes('data-rig-kind="bot"'));
   assert(botHtml.includes('data-rig-signature="bot:'));
   assert(botHtml.includes('style="--seat-amplitude-scale: 1.25"'));
-  assert(botHtml.includes('data-reaction-bot-emotion="happy"'));
-  assert(botHtml.includes('data-micro-bot-emotion="dizzy"'));
   assert(botHtml.includes('aria-label="East &lt;bot&gt; &quot;alert&quot;"'));
   assertEquals(botHtml.match(/class="avatar avatar-rigged/g)?.length, 3);
 
@@ -499,6 +498,8 @@ Deno.test("SSR renders validated opt-in control banks without changing the defau
   const common = {
     id: "controlled",
     label: "Controlled bot",
+    matchScope: "match-1",
+    audioProfileId: "bot-controlled",
     reaction: null,
     precedingReaction: null,
     microReaction: null,
@@ -558,20 +559,25 @@ Deno.test("SSR renders validated opt-in control banks without changing the defau
   ]);
 });
 
-Deno.test("SSR serializes every reaction field and null reaction default", () => {
-  const reaction: ReactionSpec = {
+Deno.test("SSR serializes escaped atomic reactions and emits all three lanes", () => {
+  const identity = parseFacialReactionIdentity("match-1:hand-1:event-42");
+  if (identity.tag !== "accepted") throw new Error("test identity rejected");
+  const reaction: FacialReaction = {
+    identity: identity.identity,
+    state: "smile",
     kind: "turn",
-    expression: "happiness",
     intensity: 3,
     motion: "pop",
     durationMs: 725,
     confidence: 0.75,
-    voiceCue: "laugh",
-    id: 42,
+    gesture: "laugh",
+    qualifier: "climactic",
   };
   const html = renderFacialRig({
     id: "reaction-fields",
     label: "Reaction fields",
+    matchScope: 'match-1" exact',
+    audioProfileId: "bot-east",
     reaction,
     precedingReaction: null,
     microReaction: null,
@@ -580,74 +586,22 @@ Deno.test("SSR serializes every reaction field and null reaction default", () =>
     src: "photo-source",
     emotion: null,
   });
-  const active = {
-    kind: "turn",
-    expression: "happiness",
-    intensity: "3",
-    motion: "pop",
-    "duration-ms": "725",
-    confidence: "0.75",
-    "voice-cue": "laugh",
-    id: "42",
-  } as const;
-  for (const [field, value] of Object.entries(active)) {
-    assertStringIncludes(html, `data-reaction-${field}="${value}"`);
-  }
-
-  const defaults = {
-    kind: "",
-    expression: "",
-    intensity: "0",
-    motion: "",
-    "duration-ms": "0",
-    confidence: "1",
-    "voice-cue": "",
-    id: "0",
-  } as const;
-  for (const prefix of ["preceding", "micro"] as const) {
-    for (const [field, value] of Object.entries(defaults)) {
-      assertStringIncludes(html, `data-${prefix}-${field}="${value}"`);
-    }
-  }
-});
-
-Deno.test("SSR clamps finite confidence and maps non-finite confidence to one", () => {
-  for (
-    const [label, confidence, expected] of [
-      ["below zero", -0.5, 0],
-      ["above one", 1.5, 1],
-      ["NaN", Number.NaN, 1],
-      ["positive infinity", Number.POSITIVE_INFINITY, 1],
-      ["negative infinity", Number.NEGATIVE_INFINITY, 1],
-    ] as const
-  ) {
-    const html = renderFacialRig({
-      id: "confidence",
-      label: "Confidence",
-      reaction: {
-        expression: "focused",
-        intensity: 1,
-        motion: "sink",
-        durationMs: 100,
-        confidence,
-        voiceCue: "sigh",
-        id: 1,
-      },
-      precedingReaction: null,
-      microReaction: null,
-      personality: { amplitudeScale: 1, durationScale: 1, audioProbability: 0 },
-      rigKind: "human-photo",
-      src: "photo-source",
-      emotion: null,
-    });
-    assertStringIncludes(html, `data-reaction-confidence="${expected}"`, label);
-  }
+  const serialized = JSON.stringify(reaction).replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+  assertStringIncludes(html, 'data-match-scope="match-1&quot; exact"');
+  assertStringIncludes(html, 'data-audio-profile-id="bot-east"');
+  assertStringIncludes(html, `data-reaction="${serialized}"`);
+  assertStringIncludes(html, 'data-preceding-reaction="null"');
+  assertStringIncludes(html, 'data-micro-reaction="null"');
+  assertEquals(html.includes("data-reaction-kind"), false);
+  assertEquals(html.includes("data-reaction-voice-cue"), false);
 });
 
 Deno.test("SSR pins rig signatures for each avatar substrate", () => {
   const common = {
     id: "signature",
     label: "Signature",
+    matchScope: "match-1",
+    audioProfileId: "profile-1",
     reaction: null,
     precedingReaction: null,
     microReaction: null,
@@ -689,8 +643,6 @@ Deno.test("SSR pins rig signatures for each avatar substrate", () => {
     assertStringIncludes(html, `data-rig-signature="${signature}"`);
   }
   const botHtml = cases[0][0];
-  assertStringIncludes(botHtml, 'data-reaction-bot-emotion=""');
-  assertStringIncludes(botHtml, 'data-micro-bot-emotion=""');
   assertEquals(botHtml.includes("--seat-amplitude-scale"), false);
 });
 
@@ -698,6 +650,8 @@ Deno.test("SSR escapes rig IDs", () => {
   const common = {
     id: 'east" onpointerenter="globalThis.pwned=1',
     label: "East",
+    matchScope: "match-1",
+    audioProfileId: "profile-1",
     reaction: null,
     precedingReaction: null,
     microReaction: null,
@@ -755,6 +709,8 @@ Deno.test("SSR rejects every unsafe SVG class with a warned blank layer", () => 
       const html = renderFacialRig({
         id: "unsafe",
         label: "Unsafe",
+        matchScope: "match-1",
+        audioProfileId: "profile-1",
         reaction: null,
         precedingReaction: null,
         microReaction: null,
@@ -786,6 +742,8 @@ Deno.test("SSR keeps replacement patterns in caller text literal", () => {
   const html = renderFacialRig({
     id: "seat-$&-1",
     label: "Bot $& $` $' name",
+    matchScope: "match-1",
+    audioProfileId: "profile-1",
     reaction: null,
     precedingReaction: null,
     microReaction: null,

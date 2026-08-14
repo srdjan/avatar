@@ -15,37 +15,18 @@ import {
   facialReactionPayloadEquals,
   initialAudioPolicy,
   initialRigControlState,
-  initialRigState,
   parseFacialReaction,
   parseRigControlCommand,
-  type ReactionPayload,
+  parseSerializedRigProtocol,
   reduceRigControl,
   reduceRigSync,
   resolveCharacterAudioProfileSlot,
+  seedRigState,
   semanticAudioForReaction,
   semanticAudioForState,
+  setRigRenderedBaseline,
   validateCharacterAudioProfiles,
 } from "../browser/runtime_core.ts";
-
-function reaction(
-  id: number,
-  overrides: Partial<Extract<ReactionPayload, { tag: "active" }>> = {},
-): Extract<ReactionPayload, { tag: "active" }> {
-  return {
-    tag: "active",
-    id,
-    kind: "TestReaction",
-    expression: "happiness",
-    intensity: 1,
-    motion: "pop",
-    durationMs: 120,
-    confidence: 1,
-    voiceCue: "laugh",
-    ...overrides,
-  };
-}
-
-const noReaction = (id = 0): ReactionPayload => ({ tag: "none", id });
 
 const atomicReaction = (overrides: Readonly<Record<string, unknown>> = {}) => ({
   identity: "match-1:hand-1:event-1",
@@ -62,6 +43,34 @@ const completeAudioProfile = (src = "/shared.mp3") =>
   Object.fromEntries(
     CHARACTER_AUDIO_PROFILE_SLOTS.map((slot) => [slot, { src, gain: 1 }]),
   );
+
+function acceptedReaction(overrides: Readonly<Record<string, unknown>> = {}) {
+  const parsed = parseFacialReaction(atomicReaction(overrides));
+  if (parsed.tag !== "accepted") throw new Error("test reaction rejected");
+  return parsed.reaction;
+}
+
+function acceptedProfiles() {
+  const parsed = validateCharacterAudioProfiles({
+    "bot-steady": completeAudioProfile(),
+    "human-default": completeAudioProfile("/human.mp3"),
+  });
+  if (parsed.tag !== "accepted") throw new Error("test profiles rejected");
+  return parsed.profiles;
+}
+
+function protocol(
+  overrides: Readonly<Record<string, unknown>> = {},
+) {
+  return {
+    matchScope: "match-1",
+    audioProfileId: "bot-steady",
+    main: null,
+    preceding: null,
+    micro: null,
+    ...overrides,
+  };
+}
 
 Deno.test("facial reaction vocabulary and semantic state policy are exhaustive", () => {
   assertEquals(FACIAL_REACTION_STATES, [
@@ -300,27 +309,6 @@ Deno.test("control command parser validates finite normalized snapshots", () => 
       },
     },
   );
-  assertEquals(
-    parseRigControlCommand({
-      tag: "trigger",
-      rigId: "avatar-rig-east",
-      sourceId: "game-state",
-      sequence: 8,
-      gesture: "laugh",
-    }),
-    {
-      tag: "parsed",
-      command: {
-        tag: "trigger",
-        rigId: "avatar-rig-east",
-        sourceId: "game-state",
-        sequence: 8,
-        gesture: "laugh",
-        intensity: 1,
-        durationMs: 900,
-      },
-    },
-  );
   for (
     const invalid of [
       null,
@@ -357,7 +345,6 @@ Deno.test("control command parser validates finite normalized snapshots", () => 
         sourceId: "source",
         sequence: 1,
         gesture: "laugh",
-        durationMs: 99,
       },
     ]
   ) {
@@ -423,34 +410,6 @@ Deno.test("control command parser snapshots accessor-backed fields once", () => 
     Object.fromEntries(Object.entries(counts).map(([field, count]) => [field, count.count])),
     { tag: 1, rigId: 1, sourceId: 1, sequence: 1, preset: 1, features: 1, jawOpen: 1 },
   );
-
-  const gestureReads = { count: 0 };
-  const trigger = Object.defineProperty(
-    {
-      tag: "trigger",
-      rigId: "avatar-rig-east",
-      sourceId: "camera",
-      sequence: 2,
-    },
-    "gesture",
-    {
-      enumerable: true,
-      get: readOnce("laugh", "not-a-gesture", gestureReads),
-    },
-  );
-  assertEquals(parseRigControlCommand(trigger), {
-    tag: "parsed",
-    command: {
-      tag: "trigger",
-      rigId: "avatar-rig-east",
-      sourceId: "camera",
-      sequence: 2,
-      gesture: "laugh",
-      intensity: 1,
-      durationMs: 900,
-    },
-  });
-  assertEquals(gestureReads.count, 1);
 
   const throwing = Object.defineProperty({}, "tag", {
     enumerable: true,
@@ -567,59 +526,240 @@ Deno.test("control pose compiler applies preset recipes, overrides, and personal
   });
 });
 
-Deno.test("rig reducer sequences preceding, macro, and micro reactions once", () => {
-  const first = reduceRigSync(initialRigState(), {
-    main: reaction(2),
-    preceding: reaction(1, { kind: "LeadReaction", durationMs: 40 }),
-    micro: reaction(1, { kind: "MicroReaction", expression: "focused" }),
-  });
-  assertEquals(first.state.seen, { main: 2, preceding: 1, micro: 1 });
-  assertEquals(first.effects, [
-    { tag: "start-macro", reaction: reaction(1, { kind: "LeadReaction", durationMs: 40 }) },
-    { tag: "schedule-macro", reaction: reaction(2), delayMs: 40 },
-    {
-      tag: "start-micro",
-      reaction: reaction(1, { kind: "MicroReaction", expression: "focused" }),
-    },
-  ]);
-
-  const repeated = reduceRigSync(first.state, {
-    main: reaction(2),
-    preceding: reaction(1, { kind: "LeadReaction", durationMs: 40 }),
-    micro: reaction(1, { kind: "MicroReaction", expression: "focused" }),
-  });
-  assertEquals(repeated.effects, []);
-
-  const blanksAdvanceIds = reduceRigSync(repeated.state, {
-    main: noReaction(3),
-    preceding: noReaction(2),
-    micro: noReaction(2),
-  });
-  assertEquals(blanksAdvanceIds.effects, []);
-  assertEquals(blanksAdvanceIds.state.seen, { main: 3, preceding: 2, micro: 2 });
+Deno.test("serialized rig protocol rejects incomplete and malformed atomic lanes", () => {
+  const valid = {
+    matchScope: "match-1",
+    audioProfileId: "bot-steady",
+    reaction: JSON.stringify(atomicReaction()),
+    precedingReaction: "null",
+    microReaction: "null",
+  };
+  assertEquals(parseSerializedRigProtocol(valid).tag, "accepted");
+  for (
+    const invalid of [
+      { ...valid, reaction: undefined },
+      { ...valid, reaction: "" },
+      { ...valid, reaction: "{" },
+      { ...valid, reaction: "undefined" },
+      { ...valid, reaction: JSON.stringify(atomicReaction({ extra: true })) },
+      { ...valid, reaction: JSON.stringify(atomicReaction({ state: "unknown" })) },
+      { ...valid, matchScope: "" },
+      { ...valid, audioProfileId: "" },
+    ]
+  ) {
+    assertEquals(parseSerializedRigProtocol(invalid), {
+      tag: "rejected",
+      reason: "invalid-rig-protocol",
+    });
+  }
 });
 
-Deno.test("rig reducer ignores stale reaction ids without lowering seen state", () => {
-  const current = reduceRigSync(initialRigState(), {
-    main: reaction(2),
-    preceding: reaction(2, { kind: "LeadReaction" }),
-    micro: reaction(2, { kind: "MicroReaction" }),
-  });
-  assertEquals(current.state.seen, { main: 2, preceding: 2, micro: 2 });
+Deno.test("rig ledger sequences lanes and enforces exact identity across them", () => {
+  const profiles = acceptedProfiles();
+  const initial = seedRigState(
+    protocol({
+      main: acceptedReaction({ identity: "seed", state: "focused" }),
+      preceding: acceptedReaction({ identity: "lead", state: "sad", durationMs: 40 }),
+    }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(initial.tag, "accepted");
+  if (initial.tag !== "accepted") return;
+  assertEquals(initial.effects, []);
+  assertEquals([...initial.state.ledger.keys()], ["lead", "seed"]);
 
-  const stale = reduceRigSync(current.state, {
-    main: reaction(1),
-    preceding: reaction(1, { kind: "LeadReaction" }),
-    micro: reaction(1, { kind: "MicroReaction" }),
+  const main = acceptedReaction({ identity: "main", state: "surprised" });
+  const preceding = acceptedReaction({ identity: "preceding", state: "mad", durationMs: 40 });
+  const micro = acceptedReaction({ identity: "micro", state: "worry" });
+  const live = reduceRigSync(
+    initial.state,
+    protocol({ main, preceding, micro }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(live.tag, "accepted");
+  if (live.tag !== "accepted") return;
+  assertEquals(live.effects.map((effect) => [effect.tag, effect.lane]), [
+    ["start-macro", "preceding"],
+    ["schedule-macro", "main"],
+    ["start-micro", "micro"],
+  ]);
+  assertEquals(live.effects.map((effect) => effect.audio?.family ?? null), [
+    "Anger",
+    "Surprise",
+    "Worry",
+  ]);
+
+  const moved = reduceRigSync(
+    live.state,
+    protocol({ micro: main }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(moved.tag, "accepted");
+  if (moved.tag !== "accepted") return;
+  assertEquals(moved.effects, []);
+  assertEquals(moved.state.rendered, {
+    preceding: "neutral",
+    main: "neutral",
+    micro: "surprised",
   });
-  assertEquals(stale.effects, []);
-  assertEquals(stale.state.seen, { main: 2, preceding: 2, micro: 2 });
+
+  const released = reduceRigSync(live.state, protocol(), profiles, "neutral");
+  assertEquals(released.tag, "accepted");
+  if (released.tag !== "accepted") return;
+  assertEquals(released.effects, []);
+  const restored = reduceRigSync(
+    released.state,
+    protocol({ main }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(restored.tag, "accepted");
+  if (restored.tag !== "accepted") return;
+  assertEquals(restored.effects, []);
+  assertEquals(restored.state.rendered.main, "surprised");
+
+  const conflict = reduceRigSync(
+    live.state,
+    protocol({ main: { ...main, confidence: 0.5 } }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(conflict.tag, "rejected");
+  if (conflict.tag !== "rejected") return;
+  assertEquals(conflict.reason, "reaction-identity-conflict");
+  assertEquals(conflict.state, live.state);
+
+  for (
+    const identity of ["01", "1", " Reaction", "reaction", "Cafe\u0301", "Caf\u00e9"]
+  ) {
+    const next = reduceRigSync(
+      live.state,
+      protocol({ main: acceptedReaction({ identity, state: "smile" }) }),
+      profiles,
+      "neutral",
+    );
+    assertEquals(next.tag, "accepted", identity);
+  }
+});
+
+Deno.test("rig transaction reserves once, gives laugh priority, and retries missing profiles", () => {
+  const profiles = acceptedProfiles();
+  const seeded = seedRigState(protocol(), profiles, "neutral");
+  if (seeded.tag !== "accepted") throw new Error("seed rejected");
+  const laugh = acceptedReaction({
+    identity: "laugh-once",
+    state: "surprised",
+    gesture: "laugh",
+    qualifier: "climactic",
+  });
+  const concurrentConflict = reduceRigSync(
+    seeded.state,
+    protocol({ main: { ...laugh, state: "mad" }, preceding: laugh }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(concurrentConflict.tag, "rejected");
+  if (concurrentConflict.tag !== "rejected") return;
+  assertEquals(concurrentConflict.reason, "reaction-identity-conflict");
+  assertEquals(concurrentConflict.state, seeded.state);
+
+  const concurrent = reduceRigSync(
+    seeded.state,
+    protocol({ main: laugh, preceding: laugh }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(concurrent.tag, "accepted");
+  if (concurrent.tag !== "accepted") return;
+  assertEquals(concurrent.effects.length, 1);
+  assertEquals(concurrent.effects[0]?.lane, "preceding");
+  const audio = concurrent.effects[0]?.audio;
+  assertEquals(
+    audio === null || audio === undefined ? audio : {
+      ...audio,
+      profileId: String(audio.profileId),
+    },
+    {
+      family: "Laughter",
+      qualifier: "climactic",
+      profileId: "bot-steady",
+      slotName: "Laughter.climactic",
+      slot: { src: "/shared.mp3", gain: 1 },
+    },
+  );
+
+  const missing = acceptedReaction({ identity: "retry", state: "smile" });
+  const rejected = reduceRigSync(
+    concurrent.state,
+    protocol({ audioProfileId: "missing", main: missing }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(rejected.tag, "rejected");
+  if (rejected.tag !== "rejected") return;
+  assertEquals(rejected.reason, "unknown-profile");
+  assertEquals(rejected.state, concurrent.state);
+  const retried = reduceRigSync(
+    concurrent.state,
+    protocol({ main: missing }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(retried.tag, "accepted");
+  if (retried.tag !== "accepted") return;
+  assertEquals(retried.effects.length, 1);
+  assertEquals(retried.state.ledger.has("retry"), true);
+
+  const restored = setRigRenderedBaseline(retried.state, "smile");
+  const sameMood = reduceRigSync(
+    restored,
+    protocol({ main: acceptedReaction({ identity: "same-mood", state: "smile" }) }),
+    profiles,
+    "smile",
+  );
+  assertEquals(sameMood.tag, "accepted");
+  if (sameMood.tag !== "accepted") return;
+  assertEquals(sameMood.effects[0]?.audio, null);
+});
+
+Deno.test("scope changes run live once and reject retired-scope rollback", () => {
+  const profiles = acceptedProfiles();
+  const scopeOne = seedRigState(
+    protocol({ main: acceptedReaction({ identity: "scope-1", state: "sad" }) }),
+    profiles,
+    "neutral",
+  );
+  if (scopeOne.tag !== "accepted") throw new Error("seed rejected");
+  const scopeTwoProtocol = protocol({
+    matchScope: "match-2",
+    main: acceptedReaction({ identity: "scope-2", state: "surprised" }),
+  });
+  const scopeTwo = reduceRigSync(scopeOne.state, scopeTwoProtocol, profiles, "neutral");
+  assertEquals(scopeTwo.tag, "accepted");
+  if (scopeTwo.tag !== "accepted") return;
+  assertEquals(scopeTwo.effects.length, 1);
+  assertEquals(scopeTwo.state.matchScope, "match-2");
+  assertEquals(scopeTwo.state.retiredMatchScopes.has("match-1"), true);
+
+  const rollback = reduceRigSync(
+    scopeTwo.state,
+    protocol({ main: acceptedReaction({ identity: "rollback", state: "mad" }) }),
+    profiles,
+    "neutral",
+  );
+  assertEquals(rollback.tag, "rejected");
+  if (rollback.tag !== "rejected") return;
+  assertEquals(rollback.reason, "retired-match-scope");
+  assertEquals(rollback.state, scopeTwo.state);
 });
 
 Deno.test("audio reducer preserves per-kind intensity probabilities", () => {
-  const availableCues = new Set(["gasp"]);
   const request = {
-    cue: "gasp",
+    family: "Surprise",
+    qualifier: null,
     intensity: 1,
     rigKind: "bot",
     rigId: "avatar-rig-east",
@@ -629,7 +769,6 @@ Deno.test("audio reducer preserves per-kind intensity probabilities", () => {
   const decide = (rigKind: "bot" | "human-generated", intensity: number, sample: number) =>
     decideAudio(initialAudioPolicy(), { ...request, intensity, rigKind }, {
       audioEnabled: true,
-      availableCues,
       now: 1_000,
       randomSample: sample,
     }).tag;
@@ -649,7 +788,6 @@ Deno.test("audio reducer preserves per-kind intensity probabilities", () => {
   assertEquals(
     decideAudio(initialAudioPolicy(), { ...request, rigKind: "human-photo" }, {
       audioEnabled: true,
-      availableCues,
       now: 1_000,
       randomSample: 0,
     }),
@@ -657,16 +795,10 @@ Deno.test("audio reducer preserves per-kind intensity probabilities", () => {
   );
 });
 
-Deno.test("audio reducer tracks active seats, cue cooldowns, and legacy durations", () => {
-  const availableCues = new Set([
-    "custom",
-    "gasp",
-    "laugh",
-    "laughClimactic",
-    "groan",
-  ]);
+Deno.test("audio reducer tracks active seats and semantic-family cooldowns", () => {
   const request = {
-    cue: "laugh",
+    family: "Laughter",
+    qualifier: "climactic",
     intensity: 3,
     rigKind: "bot",
     rigId: "avatar-rig-east",
@@ -675,7 +807,6 @@ Deno.test("audio reducer tracks active seats, cue cooldowns, and legacy duration
   } as const;
   const context = (now: number) => ({
     audioEnabled: true,
-    availableCues,
     now,
     randomSample: 0,
   });
@@ -684,30 +815,40 @@ Deno.test("audio reducer tracks active seats, cue cooldowns, and legacy duration
   if (admitted.tag !== "admitted") return;
   assertEquals({
     channelKey: admitted.channelKey,
-    cueKey: admitted.cueKey,
+    family: admitted.family,
     durationMs: admitted.durationMs,
   }, {
     channelKey: "east",
-    cueKey: "laughClimactic",
+    family: "Laughter",
     durationMs: 1_800,
   });
 
   const active = audioStarted(admitted.nextState, admitted.channelKey);
   assertEquals(
-    decideAudio(active, { ...request, cue: "gasp", intensity: 1 }, context(3_501)),
+    decideAudio(
+      active,
+      { ...request, family: "Surprise", qualifier: null, intensity: 1 },
+      context(3_501),
+    ),
     { tag: "rejected", reason: "seat-active" },
   );
 
   const secondSeat = decideAudio(
     active,
-    { ...request, cue: "gasp", intensity: 1, seatId: "west" },
+    { ...request, family: "Surprise", qualifier: null, intensity: 1, seatId: "west" },
     context(1_100),
   );
   assertEquals(secondSeat.tag, "admitted");
   if (secondSeat.tag !== "admitted") return;
   const full = audioStarted(secondSeat.nextState, secondSeat.channelKey);
   assertEquals(
-    decideAudio(full, { ...request, cue: "groan", intensity: 1, seatId: "north" }, context(1_100)),
+    decideAudio(full, {
+      ...request,
+      family: "Anger",
+      qualifier: null,
+      intensity: 1,
+      seatId: "north",
+    }, context(1_100)),
     { tag: "rejected", reason: "channel-cap" },
   );
 
@@ -715,37 +856,31 @@ Deno.test("audio reducer tracks active seats, cue cooldowns, and legacy duration
   const released = audioEnded(releasedWest, admitted.channelKey);
   assertEquals(released.activeSeats, {});
 
-  const sameCue = decideAudio(
+  const sameFamily = decideAudio(
     released,
-    { ...request, cue: "gasp", intensity: 1, seatId: "north" },
+    { ...request, family: "Surprise", qualifier: null, intensity: 1, seatId: "north" },
     context(1_200),
   );
-  assertEquals(sameCue, { tag: "rejected", reason: "cue-cooldown" });
+  assertEquals(sameFamily, { tag: "rejected", reason: "family-cooldown" });
   const climacticBypass = decideAudio(
     released,
-    { ...request, cue: "gasp", intensity: 3, seatId: "north" },
+    { ...request, family: "Surprise", qualifier: null, intensity: 3, seatId: "north" },
     context(1_200),
   );
   assertEquals(climacticBypass.tag, "admitted");
 
   const normalLaugh = decideAudio(
     initialAudioPolicy(),
-    { ...request, intensity: 1, seatId: "normal-laugh" },
+    { ...request, qualifier: "standard", intensity: 1, seatId: "normal-laugh" },
     context(2_000),
   );
   assertEquals(normalLaugh.tag === "admitted" ? normalLaugh.durationMs : null, 945);
-  const fallback = decideAudio(
-    initialAudioPolicy(),
-    { ...request, cue: "custom", intensity: 2, seatId: "fallback" },
-    context(2_000),
-  );
-  assertEquals(fallback.tag === "admitted" ? fallback.durationMs : null, 2_400);
 });
 
 Deno.test("audio reducer keeps a 600ms seat gap and prunes expired throttle state", () => {
-  const availableCues = new Set(["gasp", "groan"]);
   const request = {
-    cue: "gasp",
+    family: "Surprise",
+    qualifier: null,
     intensity: 1,
     rigKind: "bot",
     rigId: "avatar-rig-east",
@@ -754,7 +889,6 @@ Deno.test("audio reducer keeps a 600ms seat gap and prunes expired throttle stat
   } as const;
   const context = (now: number) => ({
     audioEnabled: true,
-    availableCues,
     now,
     randomSample: 0,
   });
@@ -762,18 +896,18 @@ Deno.test("audio reducer keeps a 600ms seat gap and prunes expired throttle stat
   assertEquals(first.tag, "admitted");
   if (first.tag !== "admitted") return;
   assertEquals(
-    decideAudio(first.nextState, { ...request, cue: "groan" }, context(1_599)),
+    decideAudio(first.nextState, { ...request, family: "Anger" }, context(1_599)),
     { tag: "rejected", reason: "seat-cooldown" },
   );
   assertEquals(
-    decideAudio(first.nextState, { ...request, cue: "groan" }, context(1_600)).tag,
+    decideAudio(first.nextState, { ...request, family: "Anger" }, context(1_600)).tag,
     "admitted",
   );
 
   const pruned = decideAudio(
     {
       activeSeats: {},
-      cueCooldownUntil: { expired: 3_999, recent: 4_001 },
+      familyCooldownUntil: { expired: 3_999, recent: 4_001 },
       seatPlayedAt: { stale: 3_399, recent: 3_999 },
     },
     { ...request, seatId: "new" },
@@ -781,6 +915,6 @@ Deno.test("audio reducer keeps a 600ms seat gap and prunes expired throttle stat
   );
   assertEquals(pruned.tag, "admitted");
   if (pruned.tag !== "admitted") return;
-  assertEquals(pruned.nextState.cueCooldownUntil, { recent: 4_001, gasp: 4_900 });
+  assertEquals(pruned.nextState.familyCooldownUntil, { recent: 4_001, Surprise: 4_900 });
   assertEquals(pruned.nextState.seatPlayedAt, { recent: 3_999, new: 4_000 });
 });

@@ -15,7 +15,6 @@ import {
   parseFacialReactionIdentity,
   type PersistentSemanticAudioFamily,
   RIG_CONTROL_FEATURES,
-  RIG_CONTROL_GESTURES,
   RIG_CONTROL_PRESETS,
   type RigControlFeature,
   type RigControlFeatureValues,
@@ -23,6 +22,7 @@ import {
   type RigControlRejectionReason,
   type RigIntensity,
   type SemanticAudioDecision,
+  type SemanticAudioFamily,
   type StateSemanticAudio,
 } from "../types.ts";
 
@@ -113,10 +113,12 @@ export function parseFacialReaction(input: unknown): FacialReactionValidationRes
 }
 
 function parseFacialReactionUnchecked(input: unknown): FacialReactionValidationResult {
-  if (!isRecord(input)) return invalidFacialReaction();
+  ensure(isRecord(input));
   const hasGesture = Object.hasOwn(input, "gesture");
-  const expectedKeys = hasGesture ? FACIAL_REACTION_LAUGH_KEYS : FACIAL_REACTION_BASE_KEYS;
-  if (!hasExactOwnKeys(input, expectedKeys)) return invalidFacialReaction();
+  const expectedKeys = [FACIAL_REACTION_BASE_KEYS, FACIAL_REACTION_LAUGH_KEYS][
+    Number(hasGesture)
+  ]!;
+  ensure(hasExactOwnKeys(input, expectedKeys));
 
   const identity = parseFacialReactionIdentity(input.identity);
   const state = input.state;
@@ -125,15 +127,13 @@ function parseFacialReactionUnchecked(input: unknown): FacialReactionValidationR
   const motion = input.motion;
   const durationMs = input.durationMs;
   const confidence = input.confidence;
-  if (
-    identity.tag !== "accepted" ||
-    !isOneOf(state, FACIAL_REACTION_STATES) ||
-    typeof kind !== "string" ||
-    !isRigIntensity(intensity) ||
-    !isOneOf(motion, RIG_MOTIONS) ||
-    !isPositiveFiniteNumber(durationMs) ||
-    !numberInRange(confidence, 0, 1)
-  ) return invalidFacialReaction();
+  ensure(identity.tag === "accepted");
+  ensure(isOneOf(state, FACIAL_REACTION_STATES));
+  ensure(typeof kind === "string");
+  ensure(isRigIntensity(intensity));
+  ensure(isOneOf(motion, RIG_MOTIONS));
+  ensure(isPositiveFiniteNumber(durationMs));
+  ensure(numberInRange(confidence, 0, 1));
 
   const metadata = {
     identity: identity.identity,
@@ -144,15 +144,19 @@ function parseFacialReactionUnchecked(input: unknown): FacialReactionValidationR
     durationMs,
     confidence,
   } as const;
-  if (!hasGesture) {
-    return { tag: "accepted", reaction: Object.freeze(metadata) };
-  }
+  return hasGesture
+    ? parseFacialReactionGesture(input, metadata)
+    : { tag: "accepted", reaction: Object.freeze(metadata) };
+}
 
+function parseFacialReactionGesture(
+  input: Readonly<Record<string, unknown>>,
+  metadata: Omit<FacialReaction, "gesture" | "qualifier">,
+): FacialReactionValidationResult {
   const gesture = input.gesture;
   const qualifier = input.qualifier;
-  if (!isOneOf(gesture, FACIAL_REACTION_GESTURES) || !isLaughterQualifier(qualifier)) {
-    return invalidFacialReaction();
-  }
+  ensure(isOneOf(gesture, FACIAL_REACTION_GESTURES));
+  ensure(isLaughterQualifier(qualifier));
   return {
     tag: "accepted",
     reaction: Object.freeze({ ...metadata, gesture, qualifier }),
@@ -172,45 +176,41 @@ export function validateCharacterAudioProfiles(
 function validateCharacterAudioProfilesUnchecked(
   input: unknown,
 ): CharacterAudioProfilesValidationResult {
-  if (!isRecord(input)) return invalidCharacterAudioProfiles();
+  ensure(isRecord(input));
   const rawProfileIds = Reflect.ownKeys(input);
-  if (
-    rawProfileIds.length === 0 ||
-    rawProfileIds.some((profileId) => typeof profileId !== "string")
-  ) return invalidCharacterAudioProfiles();
+  ensure([
+    rawProfileIds.length > 0,
+    rawProfileIds.every((profileId) => typeof profileId === "string"),
+  ].every(Boolean));
 
-  const profiles: Array<readonly [string, CharacterAudioProfile]> = [];
-  for (const rawProfileId of rawProfileIds) {
-    if (typeof rawProfileId !== "string") return invalidCharacterAudioProfiles();
+  const profiles = (rawProfileIds as string[]).map((rawProfileId) => {
     const profileId = parseCharacterAudioProfileId(rawProfileId);
-    const profile = parseCharacterAudioProfile(input[rawProfileId]);
-    if (profileId.tag !== "accepted" || profile === null) {
-      return invalidCharacterAudioProfiles();
-    }
-    profiles.push([profileId.profileId, profile]);
-  }
+    ensure(profileId.tag === "accepted");
+    return [profileId.profileId, parseCharacterAudioProfile(input[rawProfileId])] as const;
+  });
   return {
     tag: "accepted",
     profiles: Object.freeze(Object.fromEntries(profiles)),
   };
 }
 
-function parseCharacterAudioProfile(input: unknown): CharacterAudioProfile | null {
-  if (!isRecord(input) || !hasExactOwnKeys(input, CHARACTER_AUDIO_PROFILE_SLOTS)) return null;
-  const slots: Array<readonly [CharacterAudioProfileSlotName, CharacterAudioProfileSlot]> = [];
-  for (const slotName of CHARACTER_AUDIO_PROFILE_SLOTS) {
-    const slot = parseCharacterAudioProfileSlot(input[slotName]);
-    if (slot === null) return null;
-    slots.push([slotName, slot]);
-  }
+function parseCharacterAudioProfile(input: unknown): CharacterAudioProfile {
+  ensure(isRecord(input));
+  ensure(hasExactOwnKeys(input, CHARACTER_AUDIO_PROFILE_SLOTS));
+  const slots = CHARACTER_AUDIO_PROFILE_SLOTS.map((slotName) =>
+    [slotName, parseCharacterAudioProfileSlot(input[slotName])] as const
+  );
   return Object.freeze(Object.fromEntries(slots)) as CharacterAudioProfile;
 }
 
-function parseCharacterAudioProfileSlot(input: unknown): CharacterAudioProfileSlot | null {
-  if (!isRecord(input) || !hasExactOwnKeys(input, ["src", "gain"])) return null;
+function parseCharacterAudioProfileSlot(input: unknown): CharacterAudioProfileSlot {
+  ensure(isRecord(input));
+  ensure(hasExactOwnKeys(input, ["src", "gain"]));
   const src = input.src;
   const gain = input.gain;
-  return isNonEmptyString(src) && numberInRange(gain, 0, 1) ? Object.freeze({ src, gain }) : null;
+  ensure(isNonEmptyString(src));
+  ensure(numberInRange(gain, 0, 1));
+  return Object.freeze({ src, gain });
 }
 
 export function resolveCharacterAudioProfileSlot(
@@ -250,17 +250,16 @@ export function facialReactionPayloadEquals(
   left: FacialReaction,
   right: FacialReaction,
 ): boolean {
-  if (
-    left.state !== right.state ||
-    left.kind !== right.kind ||
-    left.intensity !== right.intensity ||
-    left.motion !== right.motion ||
-    left.durationMs !== right.durationMs ||
-    left.confidence !== right.confidence ||
-    left.gesture !== right.gesture
-  ) return false;
-  return left.gesture !== "laugh" ||
-    (right.gesture === "laugh" && left.qualifier === right.qualifier);
+  return [
+    left.state === right.state,
+    left.kind === right.kind,
+    left.intensity === right.intensity,
+    left.motion === right.motion,
+    left.durationMs === right.durationMs,
+    left.confidence === right.confidence,
+    left.gesture === right.gesture,
+    left.qualifier === right.qualifier,
+  ].every(Boolean);
 }
 
 function hasExactOwnKeys(
@@ -268,16 +267,28 @@ function hasExactOwnKeys(
   expected: ReadonlyArray<string>,
 ): boolean {
   const keys = Reflect.ownKeys(input);
-  return keys.length === expected.length &&
-    keys.every((key) => typeof key === "string" && expected.includes(key));
+  return [
+    keys.length === expected.length,
+    keys.every((key) => [typeof key === "string", expected.includes(key as string)].every(Boolean)),
+  ].every(Boolean);
 }
 
 function isRigIntensity(input: unknown): input is RigIntensity {
-  return input === 1 || input === 2 || input === 3;
+  return ([1, 2, 3] as ReadonlyArray<unknown>).includes(input);
 }
 
 function isPositiveFiniteNumber(input: unknown): input is number {
-  return typeof input === "number" && Number.isFinite(input) && input > 0;
+  return [
+    typeof input === "number",
+    Number.isFinite(input),
+    (input as number) > 0,
+  ].every(Boolean);
+}
+
+const BOUNDARY_REJECTION = Symbol("boundary-rejection");
+
+function ensure(condition: boolean, reason: unknown = BOUNDARY_REJECTION): asserts condition {
+  if (!condition) throw reason;
 }
 
 function invalidFacialReaction(): FacialReactionValidationResult {
@@ -290,114 +301,302 @@ function invalidCharacterAudioProfiles(): CharacterAudioProfilesValidationResult
 
 export type RigKind = "bot" | "human-generated" | "human-photo" | "unknown";
 
-export type ReactionPayload =
-  | Readonly<{ tag: "none"; id: number }>
-  | Readonly<{
-    tag: "active";
-    id: number;
-    kind: string;
-    expression: string;
-    intensity: number;
-    motion: string;
-    durationMs: number;
-    confidence: number;
-    voiceCue: string;
-  }>;
+export const RIG_REACTION_LANES = ["preceding", "main", "micro"] as const;
+
+export type RigReactionLane = (typeof RIG_REACTION_LANES)[number];
 
 export type RigProtocol = Readonly<{
-  main: ReactionPayload;
-  preceding: ReactionPayload;
-  micro: ReactionPayload;
+  matchScope: string;
+  audioProfileId: string;
+  main: FacialReaction | null;
+  preceding: FacialReaction | null;
+  micro: FacialReaction | null;
 }>;
 
-type SpeechActivity =
-  | Readonly<{ tag: "silent" }>
-  | Readonly<{ tag: "speaking" }>
-  | Readonly<{ tag: "fading" }>;
+export type SerializedRigProtocol = Readonly<{
+  matchScope?: unknown;
+  audioProfileId?: unknown;
+  reaction?: unknown;
+  precedingReaction?: unknown;
+  microReaction?: unknown;
+}>;
+
+export type RigProtocolParseResult =
+  | Readonly<{ tag: "accepted"; protocol: RigProtocol }>
+  | Readonly<{ tag: "rejected"; reason: "invalid-rig-protocol" }>;
+
+export function parseSerializedRigProtocol(input: SerializedRigProtocol): RigProtocolParseResult {
+  try {
+    const matchScope = input.matchScope;
+    const audioProfileId = input.audioProfileId;
+    const parsedProfileId = parseCharacterAudioProfileId(audioProfileId);
+    ensure(isNonEmptyString(matchScope));
+    ensure(parsedProfileId.tag === "accepted");
+    const main = parseSerializedReaction(input.reaction);
+    const preceding = parseSerializedReaction(input.precedingReaction);
+    const micro = parseSerializedReaction(input.microReaction);
+    return {
+      tag: "accepted",
+      protocol: {
+        matchScope,
+        audioProfileId: parsedProfileId.profileId,
+        main,
+        preceding,
+        micro,
+      },
+    };
+  } catch {
+    return invalidRigProtocol();
+  }
+}
+
+function parseSerializedReaction(input: unknown): FacialReaction | null {
+  ensure(typeof input === "string");
+  ensure(input.length > 0);
+  const parsed: unknown = JSON.parse(input);
+  if (parsed === null) return null;
+  const reaction = parseFacialReaction(parsed);
+  ensure(reaction.tag === "accepted");
+  return reaction.reaction;
+}
+
+function invalidRigProtocol(): RigProtocolParseResult {
+  return { tag: "rejected", reason: "invalid-rig-protocol" };
+}
+
+export type ResolvedSemanticAudioCandidate = Readonly<{
+  family: SemanticAudioFamily;
+  qualifier: LaughterQualifier | null;
+  profileId: CharacterAudioProfileId;
+  slotName: CharacterAudioProfileSlotName;
+  slot: CharacterAudioProfileSlot;
+}>;
+
+type RenderedLaneStates = Readonly<Record<RigReactionLane, FacialReactionState>>;
 
 export type RigState = Readonly<{
-  seen: Readonly<{ main: number; preceding: number; micro: number }>;
-  speech: SpeechActivity;
+  matchScope: string;
+  retiredMatchScopes: ReadonlySet<string>;
+  ledger: ReadonlyMap<string, FacialReaction>;
+  rendered: RenderedLaneStates;
+}>;
+
+type RigEffectBase = Readonly<{
+  lane: RigReactionLane;
+  reaction: FacialReaction;
+  audio: ResolvedSemanticAudioCandidate | null;
 }>;
 
 export type RigEffect =
+  | Readonly<{ tag: "start-macro" } & RigEffectBase>
+  | Readonly<{ tag: "schedule-macro"; delayMs: number } & RigEffectBase>
+  | Readonly<{ tag: "start-micro" } & RigEffectBase>;
+
+export type RigTransitionRejectionReason =
+  | "invalid-profile-id"
+  | "unknown-profile"
+  | "reaction-identity-conflict"
+  | "retired-match-scope";
+
+export type RigTransition =
   | Readonly<{
-    tag: "start-macro";
-    reaction: Extract<ReactionPayload, { tag: "active" }>;
+    tag: "accepted";
+    state: RigState;
+    effects: ReadonlyArray<RigEffect>;
   }>
   | Readonly<{
-    tag: "schedule-macro";
-    reaction: Extract<ReactionPayload, { tag: "active" }>;
-    delayMs: number;
-  }>
-  | Readonly<{
-    tag: "start-micro";
-    reaction: Extract<ReactionPayload, { tag: "active" }>;
+    tag: "rejected";
+    state: RigState;
+    reason: RigTransitionRejectionReason;
   }>;
 
-export type RigTransition = Readonly<{
-  state: RigState;
-  effects: ReadonlyArray<RigEffect>;
-}>;
-
-type ActiveReaction = Extract<ReactionPayload, { tag: "active" }>;
-
-export function initialRigState(): RigState {
-  return {
-    seen: { main: 0, preceding: 0, micro: 0 },
-    speech: { tag: "silent" },
+export function seedRigState(
+  protocol: RigProtocol,
+  profiles: CharacterAudioProfileCatalog,
+  restingState: FacialReactionState,
+): RigTransition {
+  const state: RigState = {
+    matchScope: protocol.matchScope,
+    retiredMatchScopes: new Set(),
+    ledger: new Map(),
+    rendered: renderedBaseline(restingState),
   };
-}
-
-export function seedRigState(protocol: RigProtocol): RigState {
-  return {
-    ...initialRigState(),
-    seen: {
-      main: protocol.main.id,
-      preceding: protocol.preceding.id,
-      micro: protocol.micro.id,
-    },
-  };
+  return transitionRigState(state, protocol, profiles, restingState, true);
 }
 
 export function reduceRigSync(
   state: RigState,
   protocol: RigProtocol,
+  profiles: CharacterAudioProfileCatalog,
+  restingState: FacialReactionState,
 ): RigTransition {
-  const mainChanged = protocol.main.id > state.seen.main;
-  const precedingChanged = protocol.preceding.id > state.seen.preceding;
-  const microChanged = protocol.micro.id > state.seen.micro;
-  const main = mainChanged && protocol.main.tag === "active" ? protocol.main : null;
-  const preceding = precedingChanged && protocol.preceding.tag === "active"
-    ? protocol.preceding
-    : null;
-  const micro = microChanged && protocol.micro.tag === "active" ? protocol.micro : null;
+  const transitionNewScope = () => {
+    const nextScopeState: RigState = {
+      matchScope: protocol.matchScope,
+      retiredMatchScopes: new Set([...state.retiredMatchScopes, state.matchScope]),
+      ledger: new Map(),
+      rendered: renderedBaseline(restingState),
+    };
+    const transitioned = transitionRigState(
+      nextScopeState,
+      protocol,
+      profiles,
+      restingState,
+      false,
+    );
+    return transitioned.tag === "rejected" ? { ...transitioned, state } : transitioned;
+  };
+  const transitionByScope = [
+    transitionNewScope,
+    () => rejectedRigTransition(state, "retired-match-scope"),
+    () => transitionRigState(state, protocol, profiles, restingState, false),
+  ] as const;
+  const scopeIndex = Number(protocol.matchScope === state.matchScope) * 2 +
+    Number(state.retiredMatchScopes.has(protocol.matchScope));
+  return transitionByScope[scopeIndex]!();
+}
+
+export function setRigRenderedBaseline(
+  state: RigState,
+  baseline: FacialReactionState,
+): RigState {
+  return { ...state, rendered: renderedBaseline(baseline) };
+}
+
+function renderedBaseline(state: FacialReactionState): RenderedLaneStates {
+  return { preceding: state, main: state, micro: state };
+}
+
+type AcceptedLane = Readonly<{
+  lane: RigReactionLane;
+  reaction: FacialReaction;
+  audio: ResolvedSemanticAudioCandidate | null;
+}>;
+
+type DeliveredLane = Readonly<{
+  lane: RigReactionLane;
+  reaction: FacialReaction;
+}>;
+
+function transitionRigState(
+  state: RigState,
+  protocol: RigProtocol,
+  profiles: CharacterAudioProfileCatalog,
+  restingState: FacialReactionState,
+  hydration: boolean,
+): RigTransition {
+  try {
+    const delivered = RIG_REACTION_LANES
+      .map((lane) => ({ lane, reaction: protocol[lane] }))
+      .filter((entry): entry is DeliveredLane => entry.reaction !== null);
+    const knownPayloadById = new Map(state.ledger);
+    delivered.forEach(({ reaction }) => {
+      const seen = knownPayloadById.get(reaction.identity);
+      const comparable = [reaction, seen as FacialReaction][Number(seen !== undefined)]!;
+      ensure(
+        facialReactionPayloadEquals(comparable, reaction),
+        "reaction-identity-conflict",
+      );
+      knownPayloadById.set(reaction.identity, reaction);
+    });
+
+    const ledger = new Map(state.ledger);
+    const distinct = [...new Map(
+      [...delivered].reverse().map((entry) => [entry.reaction.identity, entry]),
+    ).values()].reverse();
+    const accepted = distinct
+      .filter(({ reaction }) => !ledger.has(reaction.identity))
+      .map(({ lane, reaction }): AcceptedLane => {
+        const audio = resolveRigAudioCandidate(
+          profiles,
+          protocol.audioProfileId,
+          reaction,
+          state.rendered[lane],
+        );
+        ensure(
+          audio.tag === "resolved",
+          (audio as Extract<RigAudioCandidateResolution, { tag: "rejected" }>).reason,
+        );
+        ledger.set(reaction.identity, reaction);
+        return { lane, reaction, audio: audio.candidate };
+      });
+    const rendered = Object.fromEntries(
+      RIG_REACTION_LANES.map((lane) => [
+        lane,
+        protocol[lane] === null ? restingState : protocol[lane].state,
+      ]),
+    ) as unknown as RenderedLaneStates;
+    const effects = [rigEffects(accepted), []][Number(hydration)] as ReadonlyArray<RigEffect>;
+    return {
+      tag: "accepted",
+      state: { ...state, ledger, rendered },
+      effects,
+    };
+  } catch (reason) {
+    return rejectedRigTransition(state, reason as RigTransitionRejectionReason);
+  }
+}
+
+type RigAudioCandidateResolution =
+  | Readonly<{ tag: "resolved"; candidate: ResolvedSemanticAudioCandidate | null }>
+  | Readonly<{
+    tag: "rejected";
+    reason: Extract<RigTransitionRejectionReason, "invalid-profile-id" | "unknown-profile">;
+  }>;
+
+function resolveRigAudioCandidate(
+  profiles: CharacterAudioProfileCatalog,
+  profileId: string,
+  reaction: FacialReaction,
+  renderedState: FacialReactionState,
+): RigAudioCandidateResolution {
+  const semantic = semanticAudioForReaction(reaction);
+  const changesMeaning = [
+    reaction.gesture === "laugh",
+    reaction.state !== renderedState,
+  ].some(Boolean);
+  const eligibleSemantic = [{ tag: "silent" } as const, semantic][Number(changesMeaning)]!;
+  const resolution = resolveCharacterAudioProfileSlot(profiles, profileId, eligibleSemantic);
+  if (resolution.tag === "rejected") return resolution;
+  if (resolution.tag === "silent") return { tag: "resolved", candidate: null };
+  ensure(eligibleSemantic.tag === "audible");
   return {
-    state: {
-      seen: {
-        main: mainChanged ? protocol.main.id : state.seen.main,
-        preceding: precedingChanged ? protocol.preceding.id : state.seen.preceding,
-        micro: microChanged ? protocol.micro.id : state.seen.micro,
-      },
-      speech: state.speech,
+    tag: "resolved",
+    candidate: {
+      family: eligibleSemantic.family,
+      qualifier: eligibleSemantic.family === "Laughter" ? eligibleSemantic.qualifier : null,
+      profileId: resolution.profileId,
+      slotName: resolution.slotName,
+      slot: resolution.slot,
     },
-    effects: rigEffects(main, preceding, micro),
   };
 }
 
-function rigEffects(
-  main: ActiveReaction | null,
-  preceding: ActiveReaction | null,
-  micro: ActiveReaction | null,
-): RigEffect[] {
-  const effects: RigEffect[] = [];
-  if (preceding !== null) effects.push({ tag: "start-macro", reaction: preceding });
-  if (main !== null && preceding === null) effects.push({ tag: "start-macro", reaction: main });
-  if (main !== null && preceding !== null) {
-    effects.push({ tag: "schedule-macro", reaction: main, delayMs: preceding.durationMs });
-  }
-  if (micro !== null) effects.push({ tag: "start-micro", reaction: micro });
-  return effects;
+function rejectedRigTransition(
+  state: RigState,
+  reason: RigTransitionRejectionReason,
+): RigTransition {
+  return { tag: "rejected", state, reason };
+}
+
+function rigEffects(accepted: ReadonlyArray<AcceptedLane>): RigEffect[] {
+  const macros = accepted.filter((entry) => entry.lane !== "micro");
+  const precedingDuration = accepted
+    .filter((entry) => entry.lane === "preceding")
+    .map((entry) => entry.reaction.durationMs)[0] as number;
+  const macroBuilders = [
+    (entry: AcceptedLane): RigEffect => ({ tag: "start-macro", ...entry }),
+    (entry: AcceptedLane): RigEffect => ({
+      tag: "schedule-macro",
+      ...entry,
+      delayMs: precedingDuration,
+    }),
+  ] as const;
+  const macroEffects = macros.map((entry, index) => macroBuilders[Math.min(index, 1)]!(entry));
+  const microEffects = accepted
+    .filter((entry) => entry.lane === "micro")
+    .map((entry): RigEffect => ({ tag: "start-micro", ...entry }));
+  return [...macroEffects, ...microEffects];
 }
 
 export type ParsedRigControlCommand =
@@ -409,15 +608,6 @@ export type ParsedRigControlCommand =
     preset: RigControlPreset;
     features: RigControlFeatureValues;
     transitionMs: number;
-  }>
-  | Readonly<{
-    tag: "trigger";
-    rigId: string;
-    sourceId: string;
-    sequence: number;
-    gesture: "laugh";
-    intensity: number;
-    durationMs: number;
   }>
   | Readonly<{
     tag: "release";
@@ -435,17 +625,12 @@ export type RigControlState = Readonly<{
   ownerSourceId: string | null;
   lastSequenceBySource: Readonly<Record<string, number>>;
   affect: Extract<ParsedRigControlCommand, { tag: "set" }> | null;
-  gesture: Extract<ParsedRigControlCommand, { tag: "trigger" }> | null;
 }>;
 
 export type RigControlEffect =
   | Readonly<{
     tag: "set-affect";
     command: Extract<ParsedRigControlCommand, { tag: "set" }>;
-  }>
-  | Readonly<{
-    tag: "trigger-gesture";
-    command: Extract<ParsedRigControlCommand, { tag: "trigger" }>;
   }>
   | Readonly<{ tag: "release-affect"; transitionMs: number }>;
 
@@ -572,8 +757,6 @@ function parseRigControlCommandUnchecked(input: unknown): RigControlParseResult 
   switch (envelope.tag) {
     case "set":
       return parseSetControlCommand(input, envelope);
-    case "trigger":
-      return parseTriggerControlCommand(input, envelope);
     case "release":
       return parseReleaseControlCommand(input, envelope);
     default:
@@ -613,42 +796,6 @@ function parseSetControlCommand(
       preset,
       features,
       transitionMs,
-    },
-  };
-}
-
-function parseTriggerControlCommand(
-  input: Readonly<Record<string, unknown>>,
-  envelope: ValidControlEnvelope,
-): RigControlParseResult {
-  const gesture = input.gesture;
-  const rawIntensity = input.intensity;
-  const rawDurationMs = input.durationMs;
-  if (
-    !hasOnlyKeys(input, [
-      "tag",
-      "rigId",
-      "sourceId",
-      "sequence",
-      "gesture",
-      "intensity",
-      "durationMs",
-    ]) ||
-    !isOneOf(gesture, RIG_CONTROL_GESTURES)
-  ) return invalidControlCommand();
-  const intensity = optionalNumberInRange(rawIntensity, 1, 0, 1);
-  const durationMs = optionalNumberInRange(rawDurationMs, 900, 100, 5_000);
-  if (intensity === null || durationMs === null) return invalidControlCommand();
-  return {
-    tag: "parsed",
-    command: {
-      tag: "trigger",
-      rigId: envelope.rigId,
-      sourceId: envelope.sourceId,
-      sequence: envelope.sequence,
-      gesture,
-      intensity,
-      durationMs,
     },
   };
 }
@@ -743,7 +890,6 @@ export function initialRigControlState(): RigControlState {
     ownerSourceId: null,
     lastSequenceBySource: {},
     affect: null,
-    gesture: null,
   };
 }
 
@@ -775,15 +921,9 @@ export function reduceRigControl(
         decision: { tag: "accepted" },
         effects: [{ tag: "set-affect", command }],
       };
-    case "trigger":
-      return {
-        state: { ...sequenced, ownerSourceId: command.sourceId, gesture: command },
-        decision: { tag: "accepted" },
-        effects: [{ tag: "trigger-gesture", command }],
-      };
     case "release":
       return {
-        state: { ...sequenced, ownerSourceId: null, affect: null, gesture: null },
+        state: { ...sequenced, ownerSourceId: null, affect: null },
         decision: { tag: "accepted" },
         effects: [{ tag: "release-affect", transitionMs: command.transitionMs }],
       };
@@ -854,12 +994,11 @@ function roundedControlNumber(value: number): number {
 
 export type AudioPolicyState = Readonly<{
   activeSeats: Readonly<Record<string, true>>;
-  cueCooldownUntil: Readonly<Record<string, number>>;
+  familyCooldownUntil: Readonly<Record<string, number>>;
   seatPlayedAt: Readonly<Record<string, number>>;
 }>;
 
-export type AudioRequest = Readonly<{
-  cue: string;
+type AudioRequestMetadata = Readonly<{
   intensity: number;
   rigKind: RigKind;
   rigId: string;
@@ -867,34 +1006,41 @@ export type AudioRequest = Readonly<{
   seatAudioProbability: number;
 }>;
 
+export type AudioRequest =
+  | Readonly<
+    & AudioRequestMetadata
+    & { family: "Laughter"; qualifier: LaughterQualifier }
+  >
+  | Readonly<
+    & AudioRequestMetadata
+    & { family: PersistentSemanticAudioFamily; qualifier: null }
+  >;
+
 export type AudioDecision =
   | Readonly<{
     tag: "rejected";
     reason:
       | "disabled"
-      | "cue"
       | "rig-kind"
-      | "missing-asset"
       | "channel-cap"
       | "probability"
       | "seat-active"
       | "seat-cooldown"
-      | "cue-cooldown";
+      | "family-cooldown";
   }>
   | Readonly<{
     tag: "admitted";
     channelKey: string;
-    cueKey: string;
+    family: SemanticAudioFamily;
     durationMs: number;
     nextState: AudioPolicyState;
   }>;
 
 type AudioRejection = Extract<AudioDecision, { tag: "rejected" }>;
-type AudioCandidate = Readonly<{ tag: "candidate"; cueKey: string }>;
+type AudioCandidate = Readonly<{ tag: "candidate" }>;
 
 type AudioDecisionContext = Readonly<{
   audioEnabled: boolean;
-  availableCues: ReadonlySet<string>;
   now: number;
   randomSample: number;
 }>;
@@ -902,15 +1048,6 @@ type AudioDecisionContext = Readonly<{
 const AUDIO_CHANNEL_CAP = 2;
 const AUDIO_SEAT_COOLDOWN_MS = 600;
 const AUDIO_CUE_COOLDOWN_MS = [900, 1_400, 2_200] as const;
-const AUDIO_TIMEOUT_MS = [2_000, 2_400, 3_200] as const;
-const AUDIO_DURATION_BY_CUE: Readonly<Record<string, number>> = {
-  challenge: 1_800,
-  gasp: 1_800,
-  groan: 1_800,
-  laugh: 945,
-  laughClimactic: 1_800,
-  sigh: 1_800,
-};
 const AUDIO_PROBABILITY_BY_KIND: Readonly<
   Partial<Record<RigKind, readonly [number, number, number]>>
 > = {
@@ -919,7 +1056,7 @@ const AUDIO_PROBABILITY_BY_KIND: Readonly<
 };
 
 export function initialAudioPolicy(): AudioPolicyState {
-  return { activeSeats: {}, cueCooldownUntil: {}, seatPlayedAt: {} };
+  return { activeSeats: {}, familyCooldownUntil: {}, seatPlayedAt: {} };
 }
 
 export function decideAudio(
@@ -937,12 +1074,12 @@ export function decideAudio(
     return { tag: "rejected", reason: "channel-cap" };
   }
   const intensityIndex = audioIntensityIndex(request.intensity);
-  const cueCooldownUntil = state.cueCooldownUntil[request.cue];
+  const familyCooldownUntil = state.familyCooldownUntil[request.family];
   if (
-    request.intensity < 3 && cueCooldownUntil !== undefined &&
-    context.now < cueCooldownUntil
+    request.intensity < 3 && familyCooldownUntil !== undefined &&
+    context.now < familyCooldownUntil
   ) {
-    return { tag: "rejected", reason: "cue-cooldown" };
+    return { tag: "rejected", reason: "family-cooldown" };
   }
   const lastPlayedAt = request.seatId === "" ? undefined : state.seatPlayedAt[request.seatId];
   if (
@@ -956,21 +1093,21 @@ export function decideAudio(
       context.now - playedAt < AUDIO_SEAT_COOLDOWN_MS
     ),
   );
-  const recentCueCooldownUntil = Object.fromEntries(
-    Object.entries(state.cueCooldownUntil).filter(([, cooldownUntil]) =>
+  const recentFamilyCooldownUntil = Object.fromEntries(
+    Object.entries(state.familyCooldownUntil).filter(([, cooldownUntil]) =>
       context.now < cooldownUntil
     ),
   );
   return {
     tag: "admitted",
     channelKey,
-    cueKey: candidate.cueKey,
-    durationMs: AUDIO_DURATION_BY_CUE[candidate.cueKey] ?? AUDIO_TIMEOUT_MS[intensityIndex],
+    family: request.family,
+    durationMs: request.family === "Laughter" && request.qualifier === "standard" ? 945 : 1_800,
     nextState: {
       ...state,
-      cueCooldownUntil: {
-        ...recentCueCooldownUntil,
-        [request.cue]: context.now + AUDIO_CUE_COOLDOWN_MS[intensityIndex],
+      familyCooldownUntil: {
+        ...recentFamilyCooldownUntil,
+        [request.family]: context.now + AUDIO_CUE_COOLDOWN_MS[intensityIndex],
       },
       seatPlayedAt: request.seatId === ""
         ? recentSeatPlayedAt
@@ -984,16 +1121,8 @@ function audioCandidate(
   context: AudioDecisionContext,
 ): AudioCandidate | AudioRejection {
   if (!context.audioEnabled) return { tag: "rejected", reason: "disabled" };
-  if (request.cue === "") return { tag: "rejected", reason: "cue" };
   if (request.rigKind !== "bot" && request.rigKind !== "human-generated") {
     return { tag: "rejected", reason: "rig-kind" };
-  }
-  const climactic = request.cue === "laugh" && request.intensity >= 3;
-  const cueKey = climactic && context.availableCues.has("laughClimactic")
-    ? "laughClimactic"
-    : request.cue;
-  if (!context.availableCues.has(cueKey)) {
-    return { tag: "rejected", reason: "missing-asset" };
   }
   const probabilities = AUDIO_PROBABILITY_BY_KIND[request.rigKind];
   if (probabilities === undefined) return { tag: "rejected", reason: "rig-kind" };
@@ -1002,7 +1131,7 @@ function audioCandidate(
   if (context.randomSample >= seatProbability * voiceProbability) {
     return { tag: "rejected", reason: "probability" };
   }
-  return { tag: "candidate", cueKey };
+  return { tag: "candidate" };
 }
 
 export function audioStarted(state: AudioPolicyState, channelKey: string): AudioPolicyState {
