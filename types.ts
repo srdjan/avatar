@@ -39,15 +39,142 @@ export type Avatar =
 export type RigExpression = AvatarExpression;
 export type RigBotEmotion = BotEmotion;
 export type RigMotion = "pop" | "shake" | "sink";
-export type RigVoiceCue = "gasp" | "laugh" | "sigh" | "groan" | "challenge";
 export type RigIntensity = 1 | 2 | 3;
 export type RigKind = Avatar["kind"];
+
+export const FACIAL_REACTION_STATES = [
+  "neutral",
+  "focused",
+  "smile",
+  "sad",
+  "worry",
+  "mad",
+  "surprised",
+] as const;
+
+export type FacialReactionState = (typeof FACIAL_REACTION_STATES)[number];
+
+export const FACIAL_REACTION_GESTURES = ["laugh"] as const;
+
+export type FacialReactionGesture = (typeof FACIAL_REACTION_GESTURES)[number];
+
+export const LAUGHTER_QUALIFIERS = ["standard", "climactic"] as const;
+
+export type LaughterQualifier = (typeof LAUGHTER_QUALIFIERS)[number];
+
+export const SEMANTIC_AUDIO_FAMILIES = [
+  "Happiness",
+  "Sadness",
+  "Worry",
+  "Anger",
+  "Surprise",
+  "Laughter",
+] as const;
+
+export type SemanticAudioFamily = (typeof SEMANTIC_AUDIO_FAMILIES)[number];
+export type PersistentSemanticAudioFamily = Exclude<SemanticAudioFamily, "Laughter">;
+
+export const CHARACTER_AUDIO_PROFILE_SLOTS = [
+  "Happiness",
+  "Sadness",
+  "Worry",
+  "Anger",
+  "Surprise",
+  "Laughter.standard",
+  "Laughter.climactic",
+] as const;
+
+export type CharacterAudioProfileSlotName = (typeof CHARACTER_AUDIO_PROFILE_SLOTS)[number];
+
+declare const facialReactionIdentityBrand: unique symbol;
+declare const characterAudioProfileIdBrand: unique symbol;
+
+export type FacialReactionIdentity = string & {
+  readonly [facialReactionIdentityBrand]: "FacialReactionIdentity";
+};
+
+export type CharacterAudioProfileId = string & {
+  readonly [characterAudioProfileIdBrand]: "CharacterAudioProfileId";
+};
+
+export type FacialReactionIdentityResult =
+  | Readonly<{ tag: "accepted"; identity: FacialReactionIdentity }>
+  | Readonly<{ tag: "rejected"; reason: "invalid-reaction-identity" }>;
+
+export type CharacterAudioProfileIdResult =
+  | Readonly<{ tag: "accepted"; profileId: CharacterAudioProfileId }>
+  | Readonly<{ tag: "rejected"; reason: "invalid-profile-id" }>;
+
+export function parseFacialReactionIdentity(input: unknown): FacialReactionIdentityResult {
+  return typeof input === "string" && input.length > 0
+    ? { tag: "accepted", identity: input as FacialReactionIdentity }
+    : { tag: "rejected", reason: "invalid-reaction-identity" };
+}
+
+export function parseCharacterAudioProfileId(input: unknown): CharacterAudioProfileIdResult {
+  return typeof input === "string" && input.length > 0
+    ? { tag: "accepted", profileId: input as CharacterAudioProfileId }
+    : { tag: "rejected", reason: "invalid-profile-id" };
+}
+
+type FacialReactionMetadata = Readonly<{
+  identity: FacialReactionIdentity;
+  state: FacialReactionState;
+  kind: string;
+  intensity: RigIntensity;
+  motion: RigMotion;
+  durationMs: number;
+  confidence: number;
+}>;
+
+export type FacialReaction =
+  | Readonly<
+    & FacialReactionMetadata
+    & {
+      gesture?: never;
+      qualifier?: never;
+    }
+  >
+  | Readonly<
+    & FacialReactionMetadata
+    & {
+      gesture: "laugh";
+      qualifier: LaughterQualifier;
+    }
+  >;
+
+export type StateSemanticAudio =
+  | Readonly<{ tag: "silent" }>
+  | Readonly<{
+    tag: "audible";
+    family: PersistentSemanticAudioFamily;
+    qualifier?: never;
+  }>;
+
+export type SemanticAudioDecision =
+  | StateSemanticAudio
+  | Readonly<{
+    tag: "audible";
+    family: "Laughter";
+    qualifier: LaughterQualifier;
+  }>;
+
+export type CharacterAudioProfileSlot = Readonly<{
+  src: string;
+  gain: number;
+}>;
+
+export type CharacterAudioProfile = Readonly<
+  Record<CharacterAudioProfileSlotName, CharacterAudioProfileSlot>
+>;
+
+export type CharacterAudioProfileCatalog = Readonly<Record<string, CharacterAudioProfile>>;
 
 export type ReactionSpec = Readonly<{
   expression: RigExpression;
   intensity: RigIntensity;
   motion: RigMotion;
-  voiceCue: RigVoiceCue;
+  voiceCue: "gasp" | "laugh" | "sigh" | "groan" | "challenge";
   durationMs: number;
   confidence?: number;
   id: number;
@@ -60,21 +187,13 @@ export type RigPersonality = Readonly<{
   audioProbability: number;
 }>;
 
-export const RIG_CONTROL_PRESETS = [
-  "neutral",
-  "focused",
-  "smile",
-  "sad",
-  "worry",
-  "mad",
-  "surprised",
-] as const;
+export const RIG_CONTROL_PRESETS = FACIAL_REACTION_STATES;
 
-export type RigControlPreset = (typeof RIG_CONTROL_PRESETS)[number];
+export type RigControlPreset = FacialReactionState;
 
-export const RIG_CONTROL_GESTURES = ["laugh"] as const;
+export const RIG_CONTROL_GESTURES = FACIAL_REACTION_GESTURES;
 
-export type RigControlGesture = (typeof RIG_CONTROL_GESTURES)[number];
+export type RigControlGesture = FacialReactionGesture;
 
 export const RIG_CONTROL_FEATURES = [
   "browInnerRaise",

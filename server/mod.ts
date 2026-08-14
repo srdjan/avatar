@@ -11,7 +11,12 @@ export { expressionVariantForBot } from "./personality.ts";
 export { renderFacialRig } from "./render.ts";
 export type { RenderRigInput } from "./render.ts";
 export type {
-  ReactionSpec,
+  CharacterAudioProfile,
+  CharacterAudioProfileCatalog,
+  CharacterAudioProfileId,
+  CharacterAudioProfileSlot,
+  FacialReaction,
+  FacialReactionIdentity,
   RigBotEmotion,
   RigControlBank,
   RigExpression,
@@ -19,5 +24,5 @@ export type {
   RigKind,
   RigMotion,
   RigPersonality,
-  RigVoiceCue,
+  SemanticAudioDecision,
 } from "../types.ts";

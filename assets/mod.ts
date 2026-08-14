@@ -1,5 +1,3 @@
-import type { RigVoiceCue } from "../types.ts";
-
 export const AVATAR_ASSETS = {
   facialRigScript: {
     id: "facialRigScript",
@@ -63,18 +61,3 @@ export const AVATAR_AUDIO_ASSETS = [
   AVATAR_ASSETS.ufNanumu,
   AVATAR_ASSETS.silence,
 ] as const;
-
-export const DEFAULT_VOICE_PACK = {
-  gasp: "opa",
-  laugh: "haha",
-  sigh: "ufNanumu",
-  groan: "ufNanumu",
-  challenge: "nenene",
-  laughClimactic: "hahaha",
-  silence: "silence",
-} as const satisfies Readonly<
-  Record<
-    RigVoiceCue | "laughClimactic" | "silence",
-    AvatarAssetId
-  >
->;

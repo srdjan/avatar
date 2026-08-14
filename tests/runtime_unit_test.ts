@@ -1,16 +1,30 @@
 import { assertEquals } from "jsr:@std/assert@1.0.14";
 import {
+  CHARACTER_AUDIO_PROFILE_SLOTS,
+  FACIAL_REACTION_GESTURES,
+  FACIAL_REACTION_STATES,
+  LAUGHTER_QUALIFIERS,
+  SEMANTIC_AUDIO_FAMILIES,
+} from "../mod.ts";
+import {
   audioEnded,
   audioStarted,
   compileRigControlPose,
   decideAudio,
+  facialReactionIdentityEquals,
+  facialReactionPayloadEquals,
   initialAudioPolicy,
   initialRigControlState,
   initialRigState,
+  parseFacialReaction,
   parseRigControlCommand,
   type ReactionPayload,
   reduceRigControl,
   reduceRigSync,
+  resolveCharacterAudioProfileSlot,
+  semanticAudioForReaction,
+  semanticAudioForState,
+  validateCharacterAudioProfiles,
 } from "../browser/runtime_core.ts";
 
 function reaction(
@@ -32,6 +46,236 @@ function reaction(
 }
 
 const noReaction = (id = 0): ReactionPayload => ({ tag: "none", id });
+
+const atomicReaction = (overrides: Readonly<Record<string, unknown>> = {}) => ({
+  identity: "match-1:hand-1:event-1",
+  state: "smile",
+  kind: "TrickWon",
+  intensity: 2,
+  motion: "pop",
+  durationMs: 900,
+  confidence: 0.8,
+  ...overrides,
+});
+
+const completeAudioProfile = (src = "/shared.mp3") =>
+  Object.fromEntries(
+    CHARACTER_AUDIO_PROFILE_SLOTS.map((slot) => [slot, { src, gain: 1 }]),
+  );
+
+Deno.test("facial reaction vocabulary and semantic state policy are exhaustive", () => {
+  assertEquals(FACIAL_REACTION_STATES, [
+    "neutral",
+    "focused",
+    "smile",
+    "sad",
+    "worry",
+    "mad",
+    "surprised",
+  ]);
+  assertEquals(FACIAL_REACTION_GESTURES, ["laugh"]);
+  assertEquals(SEMANTIC_AUDIO_FAMILIES, [
+    "Happiness",
+    "Sadness",
+    "Worry",
+    "Anger",
+    "Surprise",
+    "Laughter",
+  ]);
+  assertEquals(LAUGHTER_QUALIFIERS, ["standard", "climactic"]);
+  assertEquals(
+    Object.fromEntries(
+      FACIAL_REACTION_STATES.map((state) => [state, semanticAudioForState(state)]),
+    ),
+    {
+      neutral: { tag: "silent" },
+      focused: { tag: "silent" },
+      smile: { tag: "audible", family: "Happiness" },
+      sad: { tag: "audible", family: "Sadness" },
+      worry: { tag: "audible", family: "Worry" },
+      mad: { tag: "audible", family: "Anger" },
+      surprised: { tag: "audible", family: "Surprise" },
+    },
+  );
+});
+
+Deno.test("facial reaction parser enforces the state and laugh qualifier ADT", () => {
+  const stateOnly = parseFacialReaction(atomicReaction());
+  assertEquals(stateOnly.tag, "accepted");
+  assertEquals(parseFacialReaction(atomicReaction({ qualifier: "standard" })), {
+    tag: "rejected",
+    reason: "invalid-reaction",
+  });
+  assertEquals(parseFacialReaction(atomicReaction({ gesture: "laugh" })), {
+    tag: "rejected",
+    reason: "invalid-reaction",
+  });
+  assertEquals(
+    parseFacialReaction(atomicReaction({ gesture: "laugh", qualifier: "unknown" })),
+    { tag: "rejected", reason: "invalid-reaction" },
+  );
+
+  for (const qualifier of LAUGHTER_QUALIFIERS) {
+    const parsed = parseFacialReaction(atomicReaction({ gesture: "laugh", qualifier }));
+    assertEquals(parsed.tag, "accepted");
+    if (parsed.tag !== "accepted") continue;
+    assertEquals(semanticAudioForReaction(parsed.reaction), {
+      tag: "audible",
+      family: "Laughter",
+      qualifier,
+    });
+  }
+});
+
+Deno.test("character audio profiles require and resolve every independent audible slot", () => {
+  assertEquals(CHARACTER_AUDIO_PROFILE_SLOTS, [
+    "Happiness",
+    "Sadness",
+    "Worry",
+    "Anger",
+    "Surprise",
+    "Laughter.standard",
+    "Laughter.climactic",
+  ]);
+  const validation = validateCharacterAudioProfiles({
+    "bot-steady": completeAudioProfile(),
+    "human-default": completeAudioProfile("/human.mp3"),
+  });
+  assertEquals(validation.tag, "accepted");
+  if (validation.tag !== "accepted") return;
+
+  for (const slotName of CHARACTER_AUDIO_PROFILE_SLOTS) {
+    const { [slotName]: _missing, ...incomplete } = completeAudioProfile();
+    assertEquals(validateCharacterAudioProfiles({ active: incomplete }), {
+      tag: "rejected",
+      reason: "invalid-profile-catalog",
+    });
+  }
+
+  const standardLaugh = parseFacialReaction(
+    atomicReaction({ gesture: "laugh", qualifier: "standard" }),
+  );
+  if (standardLaugh.tag !== "accepted") return;
+  const resolved = resolveCharacterAudioProfileSlot(
+    validation.profiles,
+    "bot-steady",
+    semanticAudioForReaction(standardLaugh.reaction),
+  );
+  assertEquals(resolved.tag, "resolved");
+  if (resolved.tag !== "resolved") return;
+  assertEquals(resolved.profileId, "bot-steady");
+  assertEquals(resolved.slotName, "Laughter.standard");
+  assertEquals(resolved.slot, { src: "/shared.mp3", gain: 1 });
+});
+
+Deno.test("reaction and profile validation reject hostile inputs without partial snapshots", () => {
+  for (
+    const invalid of [
+      atomicReaction({ lane: "main" }),
+      atomicReaction({ durationMs: Number.NaN }),
+      atomicReaction({ confidence: Number.POSITIVE_INFINITY }),
+      atomicReaction({ identity: "" }),
+      atomicReaction({ identity: 1 }),
+    ]
+  ) {
+    assertEquals(parseFacialReaction(invalid), {
+      tag: "rejected",
+      reason: "invalid-reaction",
+    });
+  }
+
+  const throwingReaction = atomicReaction();
+  Object.defineProperty(throwingReaction, "state", {
+    enumerable: true,
+    get(): never {
+      throw new Error("hostile reaction accessor");
+    },
+  });
+  assertEquals(parseFacialReaction(throwingReaction), {
+    tag: "rejected",
+    reason: "invalid-reaction",
+  });
+
+  let identityReads = 0;
+  const accessorReaction = atomicReaction();
+  Object.defineProperty(accessorReaction, "identity", {
+    enumerable: true,
+    get(): string {
+      identityReads++;
+      return "accessor-identity";
+    },
+  });
+  assertEquals(parseFacialReaction(accessorReaction).tag, "accepted");
+  assertEquals(identityReads, 1);
+
+  const throwingProfile = completeAudioProfile();
+  Object.defineProperty(throwingProfile, "Happiness", {
+    enumerable: true,
+    get(): never {
+      throw new Error("hostile profile accessor");
+    },
+  });
+  for (
+    const invalid of [
+      { active: { ...completeAudioProfile(), unknown: { src: "/x.mp3", gain: 1 } } },
+      { active: { ...completeAudioProfile(), Happiness: { src: "/x.mp3", gain: Number.NaN } } },
+      { active: throwingProfile },
+    ]
+  ) {
+    assertEquals(validateCharacterAudioProfiles(invalid), {
+      tag: "rejected",
+      reason: "invalid-profile-catalog",
+    });
+  }
+
+  let slotReads = 0;
+  const accessorProfile = completeAudioProfile();
+  Object.defineProperty(accessorProfile, "Happiness", {
+    enumerable: true,
+    get(): Readonly<{ src: string; gain: number }> {
+      slotReads++;
+      return { src: "/happy.mp3", gain: 1 };
+    },
+  });
+  assertEquals(validateCharacterAudioProfiles({ active: accessorProfile }).tag, "accepted");
+  assertEquals(slotReads, 1);
+});
+
+Deno.test("parsed reaction equality is structural while identity remains exact", () => {
+  const first = parseFacialReaction(JSON.parse(JSON.stringify(atomicReaction({ identity: "01" }))));
+  const reordered = parseFacialReaction(JSON.parse(
+    '{"confidence":0.8,"durationMs":900,"motion":"pop","intensity":2,' +
+      '"kind":"TrickWon","state":"smile","identity":"01"}',
+  ));
+  const distinctIdentity = parseFacialReaction(atomicReaction({ identity: "1" }));
+  if (
+    first.tag !== "accepted" || reordered.tag !== "accepted" ||
+    distinctIdentity.tag !== "accepted"
+  ) return;
+
+  const mainDelivery = { lane: "main", reaction: first.reaction } as const;
+  const movedDelivery = { lane: "micro", reaction: reordered.reaction } as const;
+  assertEquals(
+    facialReactionPayloadEquals(mainDelivery.reaction, movedDelivery.reaction),
+    true,
+  );
+  assertEquals(facialReactionIdentityEquals(first.reaction, reordered.reaction), true);
+  assertEquals(facialReactionPayloadEquals(first.reaction, distinctIdentity.reaction), true);
+  assertEquals(facialReactionIdentityEquals(first.reaction, distinctIdentity.reaction), false);
+
+  for (
+    const [leftIdentity, rightIdentity] of [
+      [" identity ", "identity"],
+      ["Reaction", "reaction"],
+      ["Cafe\u0301", "Caf\u00e9"],
+    ] as const
+  ) {
+    const left = parseFacialReaction(atomicReaction({ identity: leftIdentity }));
+    const right = parseFacialReaction(atomicReaction({ identity: rightIdentity }));
+    if (left.tag !== "accepted" || right.tag !== "accepted") return;
+    assertEquals(facialReactionIdentityEquals(left.reaction, right.reaction), false);
+  }
+});
 
 Deno.test("control command parser validates finite normalized snapshots", () => {
   assertEquals(

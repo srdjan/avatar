@@ -1,4 +1,19 @@
 import {
+  CHARACTER_AUDIO_PROFILE_SLOTS,
+  type CharacterAudioProfile,
+  type CharacterAudioProfileCatalog,
+  type CharacterAudioProfileId,
+  type CharacterAudioProfileSlot,
+  type CharacterAudioProfileSlotName,
+  FACIAL_REACTION_GESTURES,
+  FACIAL_REACTION_STATES,
+  type FacialReaction,
+  type FacialReactionState,
+  LAUGHTER_QUALIFIERS,
+  type LaughterQualifier,
+  parseCharacterAudioProfileId,
+  parseFacialReactionIdentity,
+  type PersistentSemanticAudioFamily,
   RIG_CONTROL_FEATURES,
   RIG_CONTROL_GESTURES,
   RIG_CONTROL_PRESETS,
@@ -6,7 +21,272 @@ import {
   type RigControlFeatureValues,
   type RigControlPreset,
   type RigControlRejectionReason,
+  type RigIntensity,
+  type SemanticAudioDecision,
+  type StateSemanticAudio,
 } from "../types.ts";
+
+const STATE_SEMANTIC_AUDIO = {
+  neutral: { tag: "silent" },
+  focused: { tag: "silent" },
+  smile: { tag: "audible", family: "Happiness" },
+  sad: { tag: "audible", family: "Sadness" },
+  worry: { tag: "audible", family: "Worry" },
+  mad: { tag: "audible", family: "Anger" },
+  surprised: { tag: "audible", family: "Surprise" },
+} as const satisfies Readonly<Record<FacialReactionState, StateSemanticAudio>>;
+
+const PROFILE_SLOT_BY_FAMILY = {
+  Happiness: "Happiness",
+  Sadness: "Sadness",
+  Worry: "Worry",
+  Anger: "Anger",
+  Surprise: "Surprise",
+} as const satisfies Readonly<
+  Record<PersistentSemanticAudioFamily, CharacterAudioProfileSlotName>
+>;
+
+const PROFILE_SLOT_BY_LAUGHTER_QUALIFIER = {
+  standard: "Laughter.standard",
+  climactic: "Laughter.climactic",
+} as const satisfies Readonly<Record<LaughterQualifier, CharacterAudioProfileSlotName>>;
+
+const FACIAL_REACTION_BASE_KEYS = [
+  "identity",
+  "state",
+  "kind",
+  "intensity",
+  "motion",
+  "durationMs",
+  "confidence",
+] as const;
+
+const FACIAL_REACTION_LAUGH_KEYS = [
+  ...FACIAL_REACTION_BASE_KEYS,
+  "gesture",
+  "qualifier",
+] as const;
+
+const RIG_MOTIONS = ["pop", "shake", "sink"] as const;
+
+export type FacialReactionValidationResult =
+  | Readonly<{ tag: "accepted"; reaction: FacialReaction }>
+  | Readonly<{ tag: "rejected"; reason: "invalid-reaction" }>;
+
+export type CharacterAudioProfilesValidationResult =
+  | Readonly<{ tag: "accepted"; profiles: CharacterAudioProfileCatalog }>
+  | Readonly<{ tag: "rejected"; reason: "invalid-profile-catalog" }>;
+
+export type CharacterAudioProfileResolution =
+  | Readonly<{
+    tag: "resolved";
+    profileId: CharacterAudioProfileId;
+    slotName: CharacterAudioProfileSlotName;
+    slot: CharacterAudioProfileSlot;
+  }>
+  | Readonly<{ tag: "silent"; profileId: CharacterAudioProfileId }>
+  | Readonly<{
+    tag: "rejected";
+    reason: "invalid-profile-id" | "unknown-profile";
+  }>;
+
+export function semanticAudioForState(state: FacialReactionState): StateSemanticAudio {
+  return STATE_SEMANTIC_AUDIO[state];
+}
+
+export function semanticAudioForReaction(reaction: FacialReaction): SemanticAudioDecision {
+  return reaction.gesture === "laugh"
+    ? { tag: "audible", family: "Laughter", qualifier: reaction.qualifier }
+    : semanticAudioForState(reaction.state);
+}
+
+export function isLaughterQualifier(input: unknown): input is LaughterQualifier {
+  return isOneOf(input, LAUGHTER_QUALIFIERS);
+}
+
+export function parseFacialReaction(input: unknown): FacialReactionValidationResult {
+  try {
+    return parseFacialReactionUnchecked(input);
+  } catch {
+    return invalidFacialReaction();
+  }
+}
+
+function parseFacialReactionUnchecked(input: unknown): FacialReactionValidationResult {
+  if (!isRecord(input)) return invalidFacialReaction();
+  const hasGesture = Object.hasOwn(input, "gesture");
+  const expectedKeys = hasGesture ? FACIAL_REACTION_LAUGH_KEYS : FACIAL_REACTION_BASE_KEYS;
+  if (!hasExactOwnKeys(input, expectedKeys)) return invalidFacialReaction();
+
+  const identity = parseFacialReactionIdentity(input.identity);
+  const state = input.state;
+  const kind = input.kind;
+  const intensity = input.intensity;
+  const motion = input.motion;
+  const durationMs = input.durationMs;
+  const confidence = input.confidence;
+  if (
+    identity.tag !== "accepted" ||
+    !isOneOf(state, FACIAL_REACTION_STATES) ||
+    typeof kind !== "string" ||
+    !isRigIntensity(intensity) ||
+    !isOneOf(motion, RIG_MOTIONS) ||
+    !isPositiveFiniteNumber(durationMs) ||
+    !numberInRange(confidence, 0, 1)
+  ) return invalidFacialReaction();
+
+  const metadata = {
+    identity: identity.identity,
+    state,
+    kind,
+    intensity,
+    motion,
+    durationMs,
+    confidence,
+  } as const;
+  if (!hasGesture) {
+    return { tag: "accepted", reaction: Object.freeze(metadata) };
+  }
+
+  const gesture = input.gesture;
+  const qualifier = input.qualifier;
+  if (!isOneOf(gesture, FACIAL_REACTION_GESTURES) || !isLaughterQualifier(qualifier)) {
+    return invalidFacialReaction();
+  }
+  return {
+    tag: "accepted",
+    reaction: Object.freeze({ ...metadata, gesture, qualifier }),
+  };
+}
+
+export function validateCharacterAudioProfiles(
+  input: unknown,
+): CharacterAudioProfilesValidationResult {
+  try {
+    return validateCharacterAudioProfilesUnchecked(input);
+  } catch {
+    return invalidCharacterAudioProfiles();
+  }
+}
+
+function validateCharacterAudioProfilesUnchecked(
+  input: unknown,
+): CharacterAudioProfilesValidationResult {
+  if (!isRecord(input)) return invalidCharacterAudioProfiles();
+  const rawProfileIds = Reflect.ownKeys(input);
+  if (
+    rawProfileIds.length === 0 ||
+    rawProfileIds.some((profileId) => typeof profileId !== "string")
+  ) return invalidCharacterAudioProfiles();
+
+  const profiles: Array<readonly [string, CharacterAudioProfile]> = [];
+  for (const rawProfileId of rawProfileIds) {
+    if (typeof rawProfileId !== "string") return invalidCharacterAudioProfiles();
+    const profileId = parseCharacterAudioProfileId(rawProfileId);
+    const profile = parseCharacterAudioProfile(input[rawProfileId]);
+    if (profileId.tag !== "accepted" || profile === null) {
+      return invalidCharacterAudioProfiles();
+    }
+    profiles.push([profileId.profileId, profile]);
+  }
+  return {
+    tag: "accepted",
+    profiles: Object.freeze(Object.fromEntries(profiles)),
+  };
+}
+
+function parseCharacterAudioProfile(input: unknown): CharacterAudioProfile | null {
+  if (!isRecord(input) || !hasExactOwnKeys(input, CHARACTER_AUDIO_PROFILE_SLOTS)) return null;
+  const slots: Array<readonly [CharacterAudioProfileSlotName, CharacterAudioProfileSlot]> = [];
+  for (const slotName of CHARACTER_AUDIO_PROFILE_SLOTS) {
+    const slot = parseCharacterAudioProfileSlot(input[slotName]);
+    if (slot === null) return null;
+    slots.push([slotName, slot]);
+  }
+  return Object.freeze(Object.fromEntries(slots)) as CharacterAudioProfile;
+}
+
+function parseCharacterAudioProfileSlot(input: unknown): CharacterAudioProfileSlot | null {
+  if (!isRecord(input) || !hasExactOwnKeys(input, ["src", "gain"])) return null;
+  const src = input.src;
+  const gain = input.gain;
+  return isNonEmptyString(src) && numberInRange(gain, 0, 1) ? Object.freeze({ src, gain }) : null;
+}
+
+export function resolveCharacterAudioProfileSlot(
+  profiles: CharacterAudioProfileCatalog,
+  rawProfileId: string,
+  semantic: SemanticAudioDecision,
+): CharacterAudioProfileResolution {
+  const profileId = parseCharacterAudioProfileId(rawProfileId);
+  if (profileId.tag !== "accepted") {
+    return { tag: "rejected", reason: "invalid-profile-id" };
+  }
+  if (!Object.hasOwn(profiles, profileId.profileId)) {
+    return { tag: "rejected", reason: "unknown-profile" };
+  }
+  if (semantic.tag === "silent") {
+    return { tag: "silent", profileId: profileId.profileId };
+  }
+  const slotName = semantic.family === "Laughter"
+    ? PROFILE_SLOT_BY_LAUGHTER_QUALIFIER[semantic.qualifier]
+    : PROFILE_SLOT_BY_FAMILY[semantic.family];
+  return {
+    tag: "resolved",
+    profileId: profileId.profileId,
+    slotName,
+    slot: profiles[profileId.profileId]![slotName],
+  };
+}
+
+export function facialReactionIdentityEquals(
+  left: FacialReaction,
+  right: FacialReaction,
+): boolean {
+  return left.identity === right.identity;
+}
+
+export function facialReactionPayloadEquals(
+  left: FacialReaction,
+  right: FacialReaction,
+): boolean {
+  if (
+    left.state !== right.state ||
+    left.kind !== right.kind ||
+    left.intensity !== right.intensity ||
+    left.motion !== right.motion ||
+    left.durationMs !== right.durationMs ||
+    left.confidence !== right.confidence ||
+    left.gesture !== right.gesture
+  ) return false;
+  return left.gesture !== "laugh" ||
+    (right.gesture === "laugh" && left.qualifier === right.qualifier);
+}
+
+function hasExactOwnKeys(
+  input: Readonly<Record<string, unknown>>,
+  expected: ReadonlyArray<string>,
+): boolean {
+  const keys = Reflect.ownKeys(input);
+  return keys.length === expected.length &&
+    keys.every((key) => typeof key === "string" && expected.includes(key));
+}
+
+function isRigIntensity(input: unknown): input is RigIntensity {
+  return input === 1 || input === 2 || input === 3;
+}
+
+function isPositiveFiniteNumber(input: unknown): input is number {
+  return typeof input === "number" && Number.isFinite(input) && input > 0;
+}
+
+function invalidFacialReaction(): FacialReactionValidationResult {
+  return { tag: "rejected", reason: "invalid-reaction" };
+}
+
+function invalidCharacterAudioProfiles(): CharacterAudioProfilesValidationResult {
+  return { tag: "rejected", reason: "invalid-profile-catalog" };
+}
 
 export type RigKind = "bot" | "human-generated" | "human-photo" | "unknown";
 
@@ -405,7 +685,7 @@ function hasControlEnvelope(input: ControlEnvelopeSnapshot): input is ValidContr
   ].every(Boolean);
 }
 
-function isNonEmptyString(value: unknown): boolean {
+function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" ? value.length > 0 : false;
 }
 
