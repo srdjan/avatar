@@ -2717,7 +2717,15 @@ Deno.test("controlled preset contact sheet stays visually deterministic at DPR 2
       await crypto.subtle.digest("SHA-256", Uint8Array.from(screenshot)),
     );
     const hash = Array.from(digest).map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    assertEquals(hash, "b034b11e89c78a74fd7a7a5c3d58b75a42ecec2e00b8d1c12c460c24faa0bee4");
+    const expectedHash = Deno.build.os === "darwin"
+      ? "b034b11e89c78a74fd7a7a5c3d58b75a42ecec2e00b8d1c12c460c24faa0bee4"
+      : Deno.build.os === "linux"
+      ? "8739c7ab9418c05b7841581f253d59afd13ee89727b5bd4f80f32b3e60f602e6"
+      : undefined;
+    if (expectedHash === undefined) {
+      throw new Error(`missing controlled preset visual baseline for ${Deno.build.os}`);
+    }
+    assertEquals(hash, expectedHash, `controlled preset visual baseline on ${Deno.build.os}`);
   } finally {
     await browser.close();
   }

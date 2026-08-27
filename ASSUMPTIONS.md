@@ -9,6 +9,8 @@
   through descriptors from `@srdjan/avatar/assets`.
 - DiceBear output and the generated browser script are byte contracts. Dependency versions,
   generated fingerprints, and asset hashes change together through the declared tasks.
+- Exact Chromium screenshot baselines are scoped by host operating system. Linux CI and macOS
+  development each use a reviewed hash; a new host requires its own reviewed baseline.
 - A reaction is one exact atomic value. Its non-empty identity is opaque and compared byte for byte,
   without trimming, case folding, or Unicode normalization.
 - Each SSR rig carries a non-empty match scope, a declared audio profile ID, and main, preceding,
