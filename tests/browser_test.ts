@@ -15,6 +15,7 @@ import {
 import { AVATAR_ASSETS } from "@srdjan/avatar/assets";
 import { createRigControlBank, renderFacialRig } from "@srdjan/avatar/server";
 import { type Browser, chromium, type Page } from "npm:playwright@1.60.0";
+import { fileURLToPath } from "node:url";
 
 const FACE_SVG = '<svg viewBox="0 0 112 112">' +
   '<g class="face-eyes"></g><g class="face-mouth"></g>' +
@@ -27,7 +28,7 @@ const PERSONALITY = {
 } as const;
 
 function localPath(url: URL): string {
-  return decodeURIComponent(url.pathname);
+  return fileURLToPath(url);
 }
 
 type V8Range = Readonly<{ startOffset: number; endOffset: number; count: number }>;
@@ -939,7 +940,6 @@ async function installResolvingAudio(page: Page): Promise<void> {
     class ResolvingAudio {
       ended = false;
       paused = false;
-      preload = "";
       src: string;
       volume = 1;
       readonly listeners = new Map<string, Listener[]>();
@@ -960,7 +960,6 @@ async function installResolvingAudio(page: Page): Promise<void> {
         );
       }
 
-      load(): void {}
       pause(): void {
         this.paused = true;
       }
@@ -2051,7 +2050,6 @@ Deno.test("all browser audio and teardown failures stay nonfatal and release cap
       const target = window as FaultTarget;
       class FaultAudio {
         ended = false;
-        private preloadValue = "";
         private srcValue: string;
         private volumeValue = 1;
         readonly listeners = new Map<string, Listener[]>();
@@ -2063,19 +2061,8 @@ Deno.test("all browser audio and teardown failures stay nonfatal and release cap
           target.faultAudio.push(this);
         }
 
-        get preload(): string {
-          return this.preloadValue;
-        }
-        set preload(value: string) {
-          if (target.faultMode === "preload") throw new Error("preload failure");
-          this.preloadValue = value;
-        }
         get src(): string {
           return this.srcValue;
-        }
-        set src(value: string) {
-          if (target.faultMode === "src") throw new Error("src failure");
-          this.srcValue = value;
         }
         get volume(): number {
           return this.volumeValue;
@@ -2099,10 +2086,6 @@ Deno.test("all browser audio and teardown failures stay nonfatal and release cap
             (this.listeners.get(type) ?? []).filter((candidate) => candidate !== listener),
           );
           if (target.faultMode === "teardown") throw new Error("listener removal failure");
-        }
-
-        load(): void {
-          if (target.faultMode === "load") throw new Error("load failure");
         }
 
         pause(): void {
@@ -2255,12 +2238,9 @@ Deno.test("all browser audio and teardown failures stay nonfatal and release cap
       for (
         const mode of [
           "constructor",
-          "preload",
-          "src",
           "volume",
           "listener-ended",
           "listener-error",
-          "load",
           "play-throw",
           "play-reject",
         ]
@@ -2321,7 +2301,7 @@ Deno.test("all browser audio and teardown failures stay nonfatal and release cap
 
     assertEquals(pageErrors, []);
     assertEquals(result, {
-      eventCount: 18,
+      eventCount: 15,
       allVisualsSettled: true,
       allListenersRemoved: true,
       nodeRemovalPaused: true,

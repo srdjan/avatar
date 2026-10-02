@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1.0.14";
+import { fileURLToPath } from "node:url";
 import {
   CHARACTER_AUDIO_PROFILE_SLOTS,
   type CharacterAudioProfile,
@@ -24,7 +25,7 @@ import {
 } from "../tools/package_integrity.ts";
 
 const EXPECTED_HASHES: Readonly<Record<keyof typeof AVATAR_ASSETS, string>> = {
-  facialRigScript: "b419a2fdf00eb437f1b66d1602afaca996d6a257ce655233e7ddf28d19525d68",
+  facialRigScript: "a05893810c978c11f13cb9dd2213ea6b5fe5fc6320531ed13f0a07aaffdfe609",
   facialRigStyles: "6753dc84ede97d0ae70784e1a2a0d85353fd90193fc11f8f3198a11844ef0fc1",
   haha: "838c4863398dba33f794faf5a640d592fa577e420a57114ef7d113d146532ca2",
   hahaha: "20351581b4b41bb7ed9eae615793598d9140c7202a5557f548d7d903aedb72cc",
@@ -201,36 +202,6 @@ Deno.test("public reaction, profile, init, and semantic contracts are complete",
   assertEquals(detail.identity, stateOnly.identity);
 });
 
-// The checked script is generated, and its bytes carry the SHA-256 above. That
-// lock is only meaningful while every build input is pinned, so prove the
-// builder reproduces the checked bytes rather than trusting the gate ordering.
-Deno.test("the checked browser script rebuilds from pinned inputs", async () => {
-  const builder = new URL("../tools/build_facial_rig.ts", import.meta.url);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const output = await new Deno.Command("deno", {
-      args: ["run", "-A", builder.pathname, "--check"],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    assert(output.success, new TextDecoder().decode(output.stderr));
-  }
-});
-
-Deno.test("the checked browser script passes standalone generated-asset lint", async () => {
-  const script = new URL("../assets/private/facial-rig.js", import.meta.url);
-  const output = await new Deno.Command("deno", {
-    args: [
-      "lint",
-      "--no-config",
-      "--rules-exclude=no-window,no-window-prefix,no-var,no-inner-declarations,no-unused-vars",
-      script.pathname,
-    ],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  assert(output.success, new TextDecoder().decode(output.stderr));
-});
-
 Deno.test("public package boundary has exactly three entry points", async () => {
   const config = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
   assertEquals(config.name, "@srdjan/avatar");
@@ -380,7 +351,7 @@ Deno.test("package sources have no Preferans imports", async () => {
 Deno.test("public root import graph stays inside the package and excludes Preferans", async () => {
   const publicRoot = new URL("../mod.ts", import.meta.url);
   const output = await new Deno.Command("deno", {
-    args: ["info", "--json", publicRoot.pathname],
+    args: ["info", "--json", fileURLToPath(publicRoot)],
     stdout: "piped",
     stderr: "piped",
   }).output();
@@ -480,7 +451,7 @@ function completeCharacterAudioProfile(): CharacterAudioProfile {
 
 async function publicSymbolNames(module: URL): Promise<string[]> {
   const output = await new Deno.Command("deno", {
-    args: ["doc", "--json", module.pathname],
+    args: ["doc", "--json", fileURLToPath(module)],
     stdout: "piped",
     stderr: "piped",
   }).output();

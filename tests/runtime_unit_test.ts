@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@1.0.14";
+import { assert, assertEquals, assertNotEquals } from "jsr:@std/assert@1.0.14";
 import {
   CHARACTER_AUDIO_PROFILE_SLOTS,
   FACIAL_REACTION_GESTURES,
@@ -11,7 +11,6 @@ import {
   audioStarted,
   compileRigControlPose,
   decideAudio,
-  facialReactionIdentityEquals,
   facialReactionPayloadEquals,
   initialAudioPolicy,
   initialRigControlState,
@@ -151,7 +150,7 @@ Deno.test("character audio profiles require and resolve every independent audibl
     "human-default": completeAudioProfile("/human.mp3"),
   });
   assertEquals(validation.tag, "accepted");
-  if (validation.tag !== "accepted") return;
+  assert(validation.tag === "accepted");
 
   for (const slotName of CHARACTER_AUDIO_PROFILE_SLOTS) {
     const { [slotName]: _missing, ...incomplete } = completeAudioProfile();
@@ -164,14 +163,13 @@ Deno.test("character audio profiles require and resolve every independent audibl
   const standardLaugh = parseFacialReaction(
     atomicReaction({ gesture: "laugh", qualifier: "standard" }),
   );
-  if (standardLaugh.tag !== "accepted") return;
+  assert(standardLaugh.tag === "accepted");
   const resolved = resolveCharacterAudioProfileSlot(
     validation.profiles,
     "bot-steady",
     semanticAudioForReaction(standardLaugh.reaction),
   );
-  assertEquals(resolved.tag, "resolved");
-  if (resolved.tag !== "resolved") return;
+  assert(resolved.tag === "resolved");
   assertEquals(resolved.profileId, "bot-steady");
   assertEquals(resolved.slotName, "Laughter.standard");
   assertEquals(resolved.slot, { src: "/shared.mp3", gain: 1 });
@@ -257,10 +255,9 @@ Deno.test("parsed reaction equality is structural while identity remains exact",
       '"kind":"TrickWon","state":"smile","identity":"01"}',
   ));
   const distinctIdentity = parseFacialReaction(atomicReaction({ identity: "1" }));
-  if (
-    first.tag !== "accepted" || reordered.tag !== "accepted" ||
-    distinctIdentity.tag !== "accepted"
-  ) return;
+  assert(first.tag === "accepted");
+  assert(reordered.tag === "accepted");
+  assert(distinctIdentity.tag === "accepted");
 
   const mainDelivery = { lane: "main", reaction: first.reaction } as const;
   const movedDelivery = { lane: "micro", reaction: reordered.reaction } as const;
@@ -268,9 +265,9 @@ Deno.test("parsed reaction equality is structural while identity remains exact",
     facialReactionPayloadEquals(mainDelivery.reaction, movedDelivery.reaction),
     true,
   );
-  assertEquals(facialReactionIdentityEquals(first.reaction, reordered.reaction), true);
+  assertEquals(first.reaction.identity, reordered.reaction.identity);
   assertEquals(facialReactionPayloadEquals(first.reaction, distinctIdentity.reaction), true);
-  assertEquals(facialReactionIdentityEquals(first.reaction, distinctIdentity.reaction), false);
+  assertNotEquals(first.reaction.identity, distinctIdentity.reaction.identity);
 
   for (
     const [leftIdentity, rightIdentity] of [
@@ -281,8 +278,9 @@ Deno.test("parsed reaction equality is structural while identity remains exact",
   ) {
     const left = parseFacialReaction(atomicReaction({ identity: leftIdentity }));
     const right = parseFacialReaction(atomicReaction({ identity: rightIdentity }));
-    if (left.tag !== "accepted" || right.tag !== "accepted") return;
-    assertEquals(facialReactionIdentityEquals(left.reaction, right.reaction), false);
+    assert(left.tag === "accepted");
+    assert(right.tag === "accepted");
+    assertNotEquals(left.reaction.identity, right.reaction.identity);
   }
 });
 
@@ -565,7 +563,7 @@ Deno.test("rig ledger sequences lanes and enforces exact identity across them", 
     "neutral",
   );
   assertEquals(initial.tag, "accepted");
-  if (initial.tag !== "accepted") return;
+  assert(initial.tag === "accepted");
   assertEquals(initial.effects, []);
   assertEquals([...initial.state.ledger.keys()], ["lead", "seed"]);
 
@@ -579,7 +577,7 @@ Deno.test("rig ledger sequences lanes and enforces exact identity across them", 
     "neutral",
   );
   assertEquals(live.tag, "accepted");
-  if (live.tag !== "accepted") return;
+  assert(live.tag === "accepted");
   assertEquals(live.effects.map((effect) => [effect.tag, effect.lane]), [
     ["start-macro", "preceding"],
     ["schedule-macro", "main"],
@@ -598,7 +596,7 @@ Deno.test("rig ledger sequences lanes and enforces exact identity across them", 
     "neutral",
   );
   assertEquals(moved.tag, "accepted");
-  if (moved.tag !== "accepted") return;
+  assert(moved.tag === "accepted");
   assertEquals(moved.effects, []);
   assertEquals(moved.state.rendered, {
     preceding: "neutral",
@@ -608,7 +606,7 @@ Deno.test("rig ledger sequences lanes and enforces exact identity across them", 
 
   const released = reduceRigSync(live.state, protocol(), profiles, "neutral");
   assertEquals(released.tag, "accepted");
-  if (released.tag !== "accepted") return;
+  assert(released.tag === "accepted");
   assertEquals(released.effects, []);
   const restored = reduceRigSync(
     released.state,
@@ -617,7 +615,7 @@ Deno.test("rig ledger sequences lanes and enforces exact identity across them", 
     "neutral",
   );
   assertEquals(restored.tag, "accepted");
-  if (restored.tag !== "accepted") return;
+  assert(restored.tag === "accepted");
   assertEquals(restored.effects, []);
   assertEquals(restored.state.rendered.main, "surprised");
 
@@ -628,7 +626,7 @@ Deno.test("rig ledger sequences lanes and enforces exact identity across them", 
     "neutral",
   );
   assertEquals(conflict.tag, "rejected");
-  if (conflict.tag !== "rejected") return;
+  assert(conflict.tag === "rejected");
   assertEquals(conflict.reason, "reaction-identity-conflict");
   assertEquals(conflict.state, live.state);
 
@@ -662,7 +660,7 @@ Deno.test("rig transaction reserves once, gives laugh priority, and retries miss
     "neutral",
   );
   assertEquals(concurrentConflict.tag, "rejected");
-  if (concurrentConflict.tag !== "rejected") return;
+  assert(concurrentConflict.tag === "rejected");
   assertEquals(concurrentConflict.reason, "reaction-identity-conflict");
   assertEquals(concurrentConflict.state, seeded.state);
 
@@ -673,7 +671,7 @@ Deno.test("rig transaction reserves once, gives laugh priority, and retries miss
     "neutral",
   );
   assertEquals(concurrent.tag, "accepted");
-  if (concurrent.tag !== "accepted") return;
+  assert(concurrent.tag === "accepted");
   assertEquals(concurrent.effects.length, 1);
   assertEquals(concurrent.effects[0]?.lane, "preceding");
   const audio = concurrent.effects[0]?.audio;
@@ -699,7 +697,7 @@ Deno.test("rig transaction reserves once, gives laugh priority, and retries miss
     "neutral",
   );
   assertEquals(rejected.tag, "rejected");
-  if (rejected.tag !== "rejected") return;
+  assert(rejected.tag === "rejected");
   assertEquals(rejected.reason, "unknown-profile");
   assertEquals(rejected.state, concurrent.state);
   const retried = reduceRigSync(
@@ -709,7 +707,7 @@ Deno.test("rig transaction reserves once, gives laugh priority, and retries miss
     "neutral",
   );
   assertEquals(retried.tag, "accepted");
-  if (retried.tag !== "accepted") return;
+  assert(retried.tag === "accepted");
   assertEquals(retried.effects.length, 1);
   assertEquals(retried.state.ledger.has("retry"), true);
 
@@ -721,7 +719,7 @@ Deno.test("rig transaction reserves once, gives laugh priority, and retries miss
     "smile",
   );
   assertEquals(sameMood.tag, "accepted");
-  if (sameMood.tag !== "accepted") return;
+  assert(sameMood.tag === "accepted");
   assertEquals(sameMood.effects[0]?.audio, null);
 });
 
@@ -739,7 +737,7 @@ Deno.test("scope changes run live once and reject retired-scope rollback", () =>
   });
   const scopeTwo = reduceRigSync(scopeOne.state, scopeTwoProtocol, profiles, "neutral");
   assertEquals(scopeTwo.tag, "accepted");
-  if (scopeTwo.tag !== "accepted") return;
+  assert(scopeTwo.tag === "accepted");
   assertEquals(scopeTwo.effects.length, 1);
   assertEquals(scopeTwo.state.matchScope, "match-2");
   assertEquals(scopeTwo.state.retiredMatchScopes.has("match-1"), true);
@@ -751,7 +749,7 @@ Deno.test("scope changes run live once and reject retired-scope rollback", () =>
     "neutral",
   );
   assertEquals(rollback.tag, "rejected");
-  if (rollback.tag !== "rejected") return;
+  assert(rollback.tag === "rejected");
   assertEquals(rollback.reason, "retired-match-scope");
   assertEquals(rollback.state, scopeTwo.state);
 });
@@ -812,7 +810,7 @@ Deno.test("audio reducer tracks active seats and semantic-family cooldowns", () 
   });
   const admitted = decideAudio(initialAudioPolicy(), request, context(1_000));
   assertEquals(admitted.tag, "admitted");
-  if (admitted.tag !== "admitted") return;
+  assert(admitted.tag === "admitted");
   assertEquals({
     channelKey: admitted.channelKey,
     family: admitted.family,
@@ -839,7 +837,7 @@ Deno.test("audio reducer tracks active seats and semantic-family cooldowns", () 
     context(1_100),
   );
   assertEquals(secondSeat.tag, "admitted");
-  if (secondSeat.tag !== "admitted") return;
+  assert(secondSeat.tag === "admitted");
   const full = audioStarted(secondSeat.nextState, secondSeat.channelKey);
   assertEquals(
     decideAudio(full, {
@@ -894,7 +892,7 @@ Deno.test("audio reducer keeps a 600ms seat gap and prunes expired throttle stat
   });
   const first = decideAudio(initialAudioPolicy(), request, context(1_000));
   assertEquals(first.tag, "admitted");
-  if (first.tag !== "admitted") return;
+  assert(first.tag === "admitted");
   assertEquals(
     decideAudio(first.nextState, { ...request, family: "Anger" }, context(1_599)),
     { tag: "rejected", reason: "seat-cooldown" },
@@ -914,7 +912,7 @@ Deno.test("audio reducer keeps a 600ms seat gap and prunes expired throttle stat
     context(4_000),
   );
   assertEquals(pruned.tag, "admitted");
-  if (pruned.tag !== "admitted") return;
+  assert(pruned.tag === "admitted");
   assertEquals(pruned.nextState.familyCooldownUntil, { recent: 4_001, Surprise: 4_900 });
   assertEquals(pruned.nextState.seatPlayedAt, { recent: 3_999, new: 4_000 });
 });
