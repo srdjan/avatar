@@ -8,7 +8,7 @@
     "npm:@dicebear/lorelei-neutral@9.4.2": "9.4.2_@dicebear+core@9.4.3",
     "npm:esbuild@0.25.9": "0.25.9",
     "npm:playwright@1.60.0": "1.60.0",
-    "npm:typescript@5.9.2": "5.9.2"
+    "npm:typescript@5.9.3": "5.9.3"
   },
   "jsr": {
     "@std/assert@1.0.14": {
@@ -225,8 +225,8 @@
       ],
       "bin": true
     },
-    "typescript@5.9.2": {
-      "integrity": "sha512-CWBzXQrc/qOkhidw1OzBTQuYRbfyxDXJMVJ1XNwUHGROVmuaeiEm3OslpZ1RV96d7SKKjZKrSJu3+t/xlw3R9A==",
+    "typescript@5.9.3": {
+      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
       "bin": true
     }
   },

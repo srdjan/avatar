@@ -145,10 +145,9 @@
   function validateCharacterAudioProfilesUnchecked(input) {
     ensure(isRecord(input));
     const rawProfileIds = Reflect.ownKeys(input);
-    ensure([
-      rawProfileIds.length > 0,
-      rawProfileIds.every((profileId) => typeof profileId === "string")
-    ].every(Boolean));
+    ensure(
+      rawProfileIds.length > 0 && rawProfileIds.every((profileId) => typeof profileId === "string")
+    );
     const profiles = rawProfileIds.map((rawProfileId) => {
       const profileId = parseCharacterAudioProfileId(rawProfileId);
       ensure(profileId.tag === "accepted");
@@ -196,33 +195,17 @@
     };
   }
   function facialReactionPayloadEquals(left, right) {
-    return [
-      left.state === right.state,
-      left.kind === right.kind,
-      left.intensity === right.intensity,
-      left.motion === right.motion,
-      left.durationMs === right.durationMs,
-      left.confidence === right.confidence,
-      left.gesture === right.gesture,
-      left.qualifier === right.qualifier
-    ].every(Boolean);
+    return left.state === right.state && left.kind === right.kind && left.intensity === right.intensity && left.motion === right.motion && left.durationMs === right.durationMs && left.confidence === right.confidence && left.gesture === right.gesture && left.qualifier === right.qualifier;
   }
   function hasExactOwnKeys(input, expected) {
     const keys = Reflect.ownKeys(input);
-    return [
-      keys.length === expected.length,
-      keys.every((key) => [typeof key === "string", expected.includes(key)].every(Boolean))
-    ].every(Boolean);
+    return keys.length === expected.length && keys.every((key) => typeof key === "string" && expected.includes(key));
   }
   function isRigIntensity(input) {
     return [1, 2, 3].includes(input);
   }
   function isPositiveFiniteNumber(input) {
-    return [
-      typeof input === "number",
-      Number.isFinite(input),
-      input > 0
-    ].every(Boolean);
+    return typeof input === "number" && Number.isFinite(input) && input > 0;
   }
   var BOUNDARY_REJECTION = Symbol("boundary-rejection");
   function ensure(condition, reason = BOUNDARY_REJECTION) {
@@ -532,12 +515,7 @@
   }
   function hasControlEnvelope(input) {
     const sequence = typeof input.sequence === "number" ? input.sequence : -1;
-    return [
-      isNonEmptyString(input.rigId),
-      isNonEmptyString(input.sourceId),
-      Number.isSafeInteger(sequence),
-      sequence >= 0
-    ].every(Boolean);
+    return isNonEmptyString(input.rigId) && isNonEmptyString(input.sourceId) && Number.isSafeInteger(sequence) && sequence >= 0;
   }
   function isNonEmptyString(value) {
     return typeof value === "string" ? value.length > 0 : false;
@@ -854,23 +832,13 @@
     let gestureInstalled = false;
     let config = null;
     function isIOSCompositorGuard() {
-      return [
-        /iPad|iPhone|iPod/.test(capabilities.navigator.userAgent),
-        [
-          capabilities.navigator.platform === "MacIntel",
-          capabilities.navigator.maxTouchPoints > 1
-        ].every(Boolean)
-      ].some(Boolean);
+      return /iPad|iPhone|iPod/.test(capabilities.navigator.userAgent) || capabilities.navigator.platform === "MacIntel" && capabilities.navigator.maxTouchPoints > 1;
     }
     function isReducedMotion() {
       return capabilities.matchMedia("(prefers-reduced-motion: reduce)").matches;
     }
     function canAnimate() {
-      return [
-        !isIOSCompositorGuard(),
-        !isReducedMotion(),
-        capabilities.document.visibilityState !== "hidden"
-      ].every(Boolean);
+      return !isIOSCompositorGuard() && !isReducedMotion() && capabilities.document.visibilityState !== "hidden";
     }
     function timersFor(rig) {
       const current = rigTimers.get(rig);
@@ -979,7 +947,7 @@
     function syncRig(rig) {
       const activeConfig = config;
       try {
-        ensureRuntime([rig.id !== "", activeConfig !== null].every(Boolean));
+        ensureRuntime(rig.id !== "" && activeConfig !== null);
         const validConfig = activeConfig;
         const parsed = readProtocol(rig);
         ensureRuntime(parsed.tag === "accepted");
@@ -999,7 +967,7 @@
           () => void 0,
           () => applyIdlePose(rig, capabilities.now())
         ];
-        idleActions[Number([canAnimate(), rigKind(rig) !== "human-photo"].every(Boolean))]();
+        idleActions[Number(canAnimate() && rigKind(rig) !== "human-photo")]();
         startBlinkLoop(rig);
       } catch (reason) {
         ignoreBrowserFailure(reason);
@@ -1015,10 +983,7 @@
     function prepareIncomingSwap(incoming, activeConfig) {
       try {
         const live = capabilities.document.getElementById(incoming.id);
-        ensureRuntime([
-          live instanceof HTMLElement,
-          live.classList.contains("avatar-rig")
-        ].every(Boolean));
+        ensureRuntime(live instanceof HTMLElement && live.classList.contains("avatar-rig"));
         const activeRig = live;
         const parsed = readProtocol(incoming);
         ensureRuntime(parsed.tag === "accepted");
@@ -1042,16 +1007,8 @@
           ).ledger;
           const macroIdentityPresent = [protocol.preceding, protocol.main].filter((reaction) => reaction !== null).some((reaction) => ledger.has(reaction.identity));
           const microIdentityPresent = [protocol.micro].filter((reaction) => reaction !== null).some((reaction) => ledger.has(reaction.identity));
-          const preserveMacro = [
-            state !== void 0,
-            activeRig.classList.contains("is-reacting"),
-            macroIdentityPresent
-          ].every(Boolean);
-          const preserveMicro = [
-            state !== void 0,
-            activeRig.classList.contains("is-micro-reacting"),
-            microIdentityPresent
-          ].every(Boolean);
+          const preserveMacro = state !== void 0 && activeRig.classList.contains("is-reacting") && macroIdentityPresent;
+          const preserveMicro = state !== void 0 && activeRig.classList.contains("is-micro-reacting") && microIdentityPresent;
           copyRigProtocol(activeRig, incoming);
           replaceLayer(activeRig, incoming, ".avatar-expression", preserveMacro);
           replaceLayer(activeRig, incoming, ".avatar-micro-expression", preserveMicro);
@@ -1072,11 +1029,9 @@
       const activeConfig = config;
       try {
         const queryRoot = fragment;
-        ensureRuntime([
-          activeConfig !== null,
-          queryRoot !== null,
-          typeof queryRoot.querySelectorAll === "function"
-        ].every(Boolean));
+        ensureRuntime(
+          activeConfig !== null && queryRoot !== null && typeof queryRoot.querySelectorAll === "function"
+        );
         const validConfig = activeConfig;
         queryRoot.querySelectorAll(".avatar-rig[id]").forEach((incoming) => prepareIncomingSwap(incoming, validConfig));
       } catch (reason) {
@@ -1504,14 +1459,11 @@
       };
       try {
         audio = capabilities.createAudio(src);
-        audio.preload = "auto";
-        audio.src = src;
         audio.volume = finiteClamp((0.45 + request.intensity * 0.12) * gain, 0, 1, 0.6);
         audio.addEventListener("ended", onEnded, { once: true });
         endedListenerInstalled = true;
         audio.addEventListener("error", onError, { once: true });
         errorListenerInstalled = true;
-        audio.load();
         timeoutId = capabilities.setTimer(() => {
           timeoutId = void 0;
           clear(true);
@@ -1600,9 +1552,6 @@
           if (silenceSrc === "") return;
           try {
             const silence = capabilities.createAudio(silenceSrc);
-            silence.preload = "auto";
-            silence.src = silenceSrc;
-            silence.load();
             const playing = silence.play();
             if (playing !== void 0) {
               void Promise.resolve(playing).catch(() => safely(() => silence.pause()));
@@ -1756,15 +1705,11 @@
     try {
       ensureRuntime(isPlainRecord(input));
       const keys = Reflect.ownKeys(input);
-      ensureRuntime([
-        keys.length === 3,
-        keys.every(
-          (key) => [
-            typeof key === "string",
-            ["audioProfiles", "silenceSrc", "isAudioEnabled"].includes(key)
-          ].every(Boolean)
+      ensureRuntime(
+        keys.length === 3 && keys.every(
+          (key) => typeof key === "string" && ["audioProfiles", "silenceSrc", "isAudioEnabled"].includes(key)
         )
-      ].every(Boolean));
+      );
       const audioProfiles = input.audioProfiles;
       const silenceSrc = input.silenceSrc;
       const isAudioEnabled = input.isAudioEnabled;
@@ -1795,7 +1740,7 @@
     return ["unknown", ...RIG_KINDS][index + 1];
   }
   function isAnimatedRig(rig) {
-    return [rig.isConnected, parseRigKind(rig.dataset.rigKind) !== "human-photo"].every(Boolean);
+    return rig.isConnected && parseRigKind(rig.dataset.rigKind) !== "human-photo";
   }
   function sameRigSignature(live, incoming) {
     const liveSignature = live.dataset.rigSignature;
@@ -1962,7 +1907,7 @@
     return Number.isFinite(parsed) ? parsed : fallback;
   }
   function defaultCapabilities(target) {
-    const AudioContextConstructor = target.AudioContext ?? target.webkitAudioContext;
+    const AudioContextConstructor = target.AudioContext;
     return {
       document: target.document,
       navigator: target.navigator,

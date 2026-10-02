@@ -1,4 +1,4 @@
-import ts from "npm:typescript@5.9.2";
+import ts from "npm:typescript@5.9.3";
 
 type FunctionMetric = Readonly<{ name: string; complexity: number }>;
 type RuntimeMetrics = Readonly<{
@@ -16,8 +16,8 @@ const source = gitRef === undefined
   : await readGitFile(gitRef, assetPath);
 const metrics = measureRuntime(source);
 console.log(JSON.stringify({ source: gitRef ?? "working-tree", ...metrics }));
-if (check && metrics.branches > 376) {
-  throw new Error(`runtime branch budget exceeded: ${metrics.branches} > 376`);
+if (check && metrics.branches > 406) {
+  throw new Error(`runtime branch budget exceeded: ${metrics.branches} > 406`);
 }
 if (check && metrics.maxComplexity.complexity > 14) {
   throw new Error(

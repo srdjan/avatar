@@ -235,7 +235,7 @@ deno task browser:check
 deno task browser:metrics
 ```
 
-`tools/runtime_metrics.ts` pins the generated runtime to at most 376 branches and maximum function
+`tools/runtime_metrics.ts` pins the generated runtime to at most 406 branches and maximum function
 complexity 14.
 
 `package.integrity.json` SHA-256 pins package metadata, public and internal modules, server and

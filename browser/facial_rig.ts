@@ -49,12 +49,9 @@ type FrameSchedule =
 
 type AudioLike = {
   ended: boolean;
-  preload: string;
-  src: string;
   volume: number;
   addEventListener(type: string, listener: () => void, options?: AddEventListenerOptions): void;
   removeEventListener(type: string, listener: () => void): void;
-  load(): void;
   pause(): void;
   play(): Promise<void> | undefined;
 };
@@ -233,13 +230,9 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
   let config: FacialRigConfig | null = null;
 
   function isIOSCompositorGuard(): boolean {
-    return [
-      /iPad|iPhone|iPod/.test(capabilities.navigator.userAgent),
-      [
-        capabilities.navigator.platform === "MacIntel",
-        capabilities.navigator.maxTouchPoints > 1,
-      ].every(Boolean),
-    ].some(Boolean);
+    return /iPad|iPhone|iPod/.test(capabilities.navigator.userAgent) ||
+      (capabilities.navigator.platform === "MacIntel" &&
+        capabilities.navigator.maxTouchPoints > 1);
   }
 
   function isReducedMotion(): boolean {
@@ -247,11 +240,9 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
   }
 
   function canAnimate(): boolean {
-    return [
-      !isIOSCompositorGuard(),
-      !isReducedMotion(),
-      capabilities.document.visibilityState !== "hidden",
-    ].every(Boolean);
+    return !isIOSCompositorGuard() &&
+      !isReducedMotion() &&
+      capabilities.document.visibilityState !== "hidden";
   }
 
   function timersFor(rig: HTMLElement): RigTimers {
@@ -384,7 +375,7 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
   function syncRig(rig: HTMLElement): void {
     const activeConfig = config;
     try {
-      ensureRuntime([rig.id !== "", activeConfig !== null].every(Boolean));
+      ensureRuntime(rig.id !== "" && activeConfig !== null);
       const validConfig = activeConfig as FacialRigConfig;
       const parsed = readProtocol(rig);
       ensureRuntime(parsed.tag === "accepted");
@@ -404,7 +395,7 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
         () => undefined,
         () => applyIdlePose(rig, capabilities.now()),
       ] as const;
-      idleActions[Number([canAnimate(), rigKind(rig) !== "human-photo"].every(Boolean))]!();
+      idleActions[Number(canAnimate() && rigKind(rig) !== "human-photo")]!();
       startBlinkLoop(rig);
     } catch (reason) {
       // Invalid rendered protocol is ignored without mutating the live rig.
@@ -426,10 +417,7 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
   ): void {
     try {
       const live = capabilities.document.getElementById(incoming.id);
-      ensureRuntime([
-        live instanceof HTMLElement,
-        (live as HTMLElement).classList.contains("avatar-rig"),
-      ].every(Boolean));
+      ensureRuntime(live instanceof HTMLElement && live.classList.contains("avatar-rig"));
       const activeRig = live as HTMLElement;
       const parsed = readProtocol(incoming);
       ensureRuntime(parsed.tag === "accepted");
@@ -458,16 +446,12 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
         const microIdentityPresent = [protocol.micro]
           .filter((reaction): reaction is FacialReaction => reaction !== null)
           .some((reaction) => ledger.has(reaction.identity));
-        const preserveMacro = [
-          state !== undefined,
-          activeRig.classList.contains("is-reacting"),
-          macroIdentityPresent,
-        ].every(Boolean);
-        const preserveMicro = [
-          state !== undefined,
-          activeRig.classList.contains("is-micro-reacting"),
-          microIdentityPresent,
-        ].every(Boolean);
+        const preserveMacro = state !== undefined &&
+          activeRig.classList.contains("is-reacting") &&
+          macroIdentityPresent;
+        const preserveMicro = state !== undefined &&
+          activeRig.classList.contains("is-micro-reacting") &&
+          microIdentityPresent;
         copyRigProtocol(activeRig, incoming);
         replaceLayer(activeRig, incoming, ".avatar-expression", preserveMacro);
         replaceLayer(activeRig, incoming, ".avatar-micro-expression", preserveMicro);
@@ -490,11 +474,11 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
     const activeConfig = config;
     try {
       const queryRoot = fragment as ParentNode | null;
-      ensureRuntime([
-        activeConfig !== null,
-        queryRoot !== null,
-        typeof (queryRoot as ParentNode).querySelectorAll === "function",
-      ].every(Boolean));
+      ensureRuntime(
+        activeConfig !== null &&
+          queryRoot !== null &&
+          typeof queryRoot.querySelectorAll === "function",
+      );
       const validConfig = activeConfig as FacialRigConfig;
       (queryRoot as ParentNode).querySelectorAll<HTMLElement>(".avatar-rig[id]")
         .forEach((incoming) => prepareIncomingSwap(incoming, validConfig));
@@ -1004,14 +988,11 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
     };
     try {
       audio = capabilities.createAudio(src);
-      audio.preload = "auto";
-      audio.src = src;
       audio.volume = finiteClamp((0.45 + request.intensity * 0.12) * gain, 0, 1, 0.6);
       audio.addEventListener("ended", onEnded, { once: true });
       endedListenerInstalled = true;
       audio.addEventListener("error", onError, { once: true });
       errorListenerInstalled = true;
-      audio.load();
       timeoutId = capabilities.setTimer(() => {
         timeoutId = undefined;
         clear(true);
@@ -1108,9 +1089,6 @@ export function createFacialRigRuntime(capabilities: BrowserCapabilities): Facia
         if (silenceSrc === "") return;
         try {
           const silence = capabilities.createAudio(silenceSrc);
-          silence.preload = "auto";
-          silence.src = silenceSrc;
-          silence.load();
           const playing = silence.play();
           if (playing !== undefined) {
             void Promise.resolve(playing).catch(() => safely(() => silence.pause()));
@@ -1281,15 +1259,13 @@ function parseConfig(input: unknown): FacialRigConfigResult {
   try {
     ensureRuntime(isPlainRecord(input));
     const keys = Reflect.ownKeys(input);
-    ensureRuntime([
-      keys.length === 3,
-      keys.every((key) =>
-        [
-          typeof key === "string",
-          ["audioProfiles", "silenceSrc", "isAudioEnabled"].includes(key as string),
-        ].every(Boolean)
-      ),
-    ].every(Boolean));
+    ensureRuntime(
+      keys.length === 3 &&
+        keys.every((key) =>
+          typeof key === "string" &&
+          ["audioProfiles", "silenceSrc", "isAudioEnabled"].includes(key)
+        ),
+    );
     const audioProfiles = input.audioProfiles;
     const silenceSrc = input.silenceSrc;
     const isAudioEnabled = input.isAudioEnabled;
@@ -1323,7 +1299,7 @@ function parseRigKind(value: unknown): RigKind {
 }
 
 function isAnimatedRig(rig: HTMLElement): boolean {
-  return [rig.isConnected, parseRigKind(rig.dataset.rigKind) !== "human-photo"].every(Boolean);
+  return rig.isConnected && parseRigKind(rig.dataset.rigKind) !== "human-photo";
 }
 
 function sameRigSignature(live: HTMLElement, incoming: HTMLElement): boolean {
@@ -1538,13 +1514,10 @@ function readUnknownNumber(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-type RuntimeWindow = Window & typeof globalThis & {
-  webkitAudioContext?: typeof AudioContext;
-};
+type RuntimeWindow = Window & typeof globalThis;
 
 function defaultCapabilities(target: RuntimeWindow): BrowserCapabilities {
-  const AudioContextConstructor = target.AudioContext ??
-    target.webkitAudioContext;
+  const AudioContextConstructor = target.AudioContext;
   return {
     document: target.document,
     navigator: target.navigator,

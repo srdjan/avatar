@@ -178,10 +178,9 @@ function validateCharacterAudioProfilesUnchecked(
 ): CharacterAudioProfilesValidationResult {
   ensure(isRecord(input));
   const rawProfileIds = Reflect.ownKeys(input);
-  ensure([
-    rawProfileIds.length > 0,
-    rawProfileIds.every((profileId) => typeof profileId === "string"),
-  ].every(Boolean));
+  ensure(
+    rawProfileIds.length > 0 && rawProfileIds.every((profileId) => typeof profileId === "string"),
+  );
 
   const profiles = (rawProfileIds as string[]).map((rawProfileId) => {
     const profileId = parseCharacterAudioProfileId(rawProfileId);
@@ -239,27 +238,18 @@ export function resolveCharacterAudioProfileSlot(
   };
 }
 
-export function facialReactionIdentityEquals(
-  left: FacialReaction,
-  right: FacialReaction,
-): boolean {
-  return left.identity === right.identity;
-}
-
 export function facialReactionPayloadEquals(
   left: FacialReaction,
   right: FacialReaction,
 ): boolean {
-  return [
-    left.state === right.state,
-    left.kind === right.kind,
-    left.intensity === right.intensity,
-    left.motion === right.motion,
-    left.durationMs === right.durationMs,
-    left.confidence === right.confidence,
-    left.gesture === right.gesture,
-    left.qualifier === right.qualifier,
-  ].every(Boolean);
+  return left.state === right.state &&
+    left.kind === right.kind &&
+    left.intensity === right.intensity &&
+    left.motion === right.motion &&
+    left.durationMs === right.durationMs &&
+    left.confidence === right.confidence &&
+    left.gesture === right.gesture &&
+    left.qualifier === right.qualifier;
 }
 
 function hasExactOwnKeys(
@@ -267,10 +257,8 @@ function hasExactOwnKeys(
   expected: ReadonlyArray<string>,
 ): boolean {
   const keys = Reflect.ownKeys(input);
-  return [
-    keys.length === expected.length,
-    keys.every((key) => [typeof key === "string", expected.includes(key as string)].every(Boolean)),
-  ].every(Boolean);
+  return keys.length === expected.length &&
+    keys.every((key) => typeof key === "string" && expected.includes(key));
 }
 
 function isRigIntensity(input: unknown): input is RigIntensity {
@@ -278,11 +266,7 @@ function isRigIntensity(input: unknown): input is RigIntensity {
 }
 
 function isPositiveFiniteNumber(input: unknown): input is number {
-  return [
-    typeof input === "number",
-    Number.isFinite(input),
-    (input as number) > 0,
-  ].every(Boolean);
+  return typeof input === "number" && Number.isFinite(input) && input > 0;
 }
 
 const BOUNDARY_REJECTION = Symbol("boundary-rejection");
@@ -824,12 +808,10 @@ function parseReleaseControlCommand(
 
 function hasControlEnvelope(input: ControlEnvelopeSnapshot): input is ValidControlEnvelope {
   const sequence = typeof input.sequence === "number" ? input.sequence : -1;
-  return [
-    isNonEmptyString(input.rigId),
-    isNonEmptyString(input.sourceId),
-    Number.isSafeInteger(sequence),
-    sequence >= 0,
-  ].every(Boolean);
+  return isNonEmptyString(input.rigId) &&
+    isNonEmptyString(input.sourceId) &&
+    Number.isSafeInteger(sequence) &&
+    sequence >= 0;
 }
 
 function isNonEmptyString(value: unknown): value is string {
