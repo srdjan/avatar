@@ -26,8 +26,23 @@
     "singleQuote": false,
     "exclude": ["assets/private/facial-rig.js"]
   },
+  "//lint": "This package does not adopt Light FP lint. A consumer workspace that loads the plugin at its root also applies it to this member, and a member cannot drop an inherited plugin, so the exclude list names every plugin rule. Without the plugin, Deno ignores these names.",
   "lint": {
-    "rules": { "tags": ["recommended"] },
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": [
+        "light-fp/layer-boundary",
+        "light-fp/no-ambient-effects",
+        "light-fp/no-discarded-values",
+        "light-fp/no-oo",
+        "light-fp/no-throw",
+        "light-fp/no-unsafe-cast",
+        "light-fp/prefer-type-for-data",
+        "light-fp/pure-module",
+        "light-fp/readonly-data",
+        "light-fp/require-ignore-reason"
+      ]
+    },
     "exclude": ["assets/private/"]
   },
   "tasks": {
