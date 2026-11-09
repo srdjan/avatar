@@ -89,9 +89,25 @@ type GeneratorConfig = Readonly<{
   profiles: ValidatedProfileCatalog;
 }>;
 
+// DiceBear picks a skin by seed, and the index depends on the palette length.
+// Six colors in this order give the built-in bots distinct skins: Mason mint,
+// Jocelyn peach, Christian blue. A unit test pins that result.
+const BOT_SKINS = ["cbb8ea", "a9d6c4", "f2c4a8", "b9c8ee", "efbfcb", "e8dcae"];
+const HUMAN_INK = ["3a2e26"];
+const HUMAN_LOOK: loreleiNeutral.Options = {
+  backgroundColor: ["f5e0bd", "e7dccb", "ead2c4", "dfe3d0"],
+  eyesColor: HUMAN_INK,
+  eyebrowsColor: HUMAN_INK,
+  mouthColor: HUMAN_INK,
+  glassesColor: HUMAN_INK,
+  frecklesColor: HUMAN_INK,
+};
+
 const DICE_BEAR_AVATARS: DiceBearAvatarCapability = Object.freeze({
-  renderHuman: (seed, options) => createAvatar(loreleiNeutral, { seed, ...options }).toDataUri(),
-  renderBot: (seed, options) => createAvatar(avataaarsNeutral, { seed, ...options }).toString(),
+  renderHuman: (seed, options) =>
+    createAvatar(loreleiNeutral, { seed, ...HUMAN_LOOK, ...options }).toDataUri(),
+  renderBot: (seed, options) =>
+    createAvatar(avataaarsNeutral, { seed, backgroundColor: BOT_SKINS, ...options }).toString(),
 });
 
 export function createAvatarGenerator(

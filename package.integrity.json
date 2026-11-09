@@ -32,7 +32,7 @@
     },
     {
       "path": "assets/private/facial-rig.css",
-      "sha256": "6753dc84ede97d0ae70784e1a2a0d85353fd90193fc11f8f3198a11844ef0fc1"
+      "sha256": "67526d26dd038ab0e69e3b6cd0a2cc73f3132647033a96a6423a7f2e781f83e9"
     },
     {
       "path": "assets/private/facial-rig.js",
@@ -52,7 +52,7 @@
     },
     {
       "path": "internal/generator.ts",
-      "sha256": "6400b638a331dd470d18d893dd80168e77c597ff40ab3afff6eb58b61d4838a6"
+      "sha256": "619740ef93cc1b9a67f59fc6589905744bd99f9db2b30cb9c0a3901a7de4a59f"
     },
     {
       "path": "mod.ts",

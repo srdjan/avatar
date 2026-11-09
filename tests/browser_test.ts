@@ -2698,7 +2698,7 @@ Deno.test("controlled preset contact sheet stays visually deterministic at DPR 2
     );
     const hash = Array.from(digest).map((byte) => byte.toString(16).padStart(2, "0")).join("");
     const expectedHash = Deno.build.os === "darwin"
-      ? "b034b11e89c78a74fd7a7a5c3d58b75a42ecec2e00b8d1c12c460c24faa0bee4"
+      ? "d301010bb4593e53ba2c1c9120d685dff795a96968a7842df334489e3ad95eec"
       : Deno.build.os === "linux"
       ? "8739c7ab9418c05b7841581f253d59afd13ee89727b5bd4f80f32b3e60f602e6"
       : undefined;

@@ -225,6 +225,10 @@ are finite numbers from 0 to 1. Invalid values reject the command instead of bei
 can change artwork, feature pose, wrapper motion, tint, and speech pose; it does not emit semantic
 audio.
 
+The stylesheet frames every rig as a rounded square with a drop shadow and a light inner edge. To
+change the frame, override `border-radius` and `box-shadow` on `.avatar-rig`, and `box-shadow` on
+`.avatar-rig::after`.
+
 ## Generated assets and source integrity
 
 The browser script and its contract hash change only through this sequence:

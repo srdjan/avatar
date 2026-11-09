@@ -27,49 +27,49 @@ type Fingerprint = Readonly<{ length: number; sha256: string }>;
 
 const BOT_FINGERPRINTS = {
   "mason-steady": {
-    happy: [5431, "fb340e09add875ca1b60f3e017fe6150acce2208f9d6168ca47a44d4e9c97056"],
-    laughing: [5645, "10ccf5101073b356f70578ba5f8b2776aedffca8c71ef59d02e886d64256140b"],
-    sad: [5066, "530243109178f2a992305b9eb95115762adf47578f7628c3de7b0b3e883f767c"],
-    dizzy: [5569, "ad5386071fbcc61279b976f55bf076ee4643436ec32902c4be1caf4609ee0b2b"],
-    focused: [4812, "f4707c0b693047c4fee5b4acdbb0fa3e6a1691527f7377f88f270bd726e66d60"],
-    angry: [5316, "34877479275da83244e6e2a68577e734fe61e45b970ff5f2dbe57734d9358d61"],
+    happy: [5431, "309c88f6be883949a2be298f298855c4b9987399f7e691f7f45c9cc916e4b0b5"],
+    laughing: [5645, "f23bd4f746d2deffcdc9611f73ea13b8217d095749c164f8a5f149b3a989bf1c"],
+    sad: [5066, "d8dfd6c965b76eb0013def80f16271ea55665627639de6e7f9aa3f295279dada"],
+    dizzy: [5569, "241a8fa6fb1652c103a40066cdf822555ed9b689a5398f6ca2105edf7c017461"],
+    focused: [4812, "65d26cccf414ecdef5efbdaec71d8fff1f0f8e4672c3da8dacf45a55791d366c"],
+    angry: [5316, "d9d6753b13d0f5c29ebbc81377f9a821b45216e1165f0675d878b38d699d4359"],
   },
   "christian-alert": {
-    happy: [5413, "5b587eaf0d0eb2acbb103bdf621b75a444d971dd853695608d9c4044fc50327b"],
-    laughing: [5627, "7e7f5de843081a8f5538bbc077aec74608e43405b6eb695e7bee79f4bcdb6732"],
-    sad: [5048, "ed916e971a9ce6ec4cb5f9a583b7bcbfad009e91716763fc11bec737695fc8b9"],
-    dizzy: [5551, "fc6944490873284ef5d1f0269c677bedd3eef276bf87204fb6ede001c4fd7010"],
-    focused: [4919, "9a682ce258aacf371422d44e4d3f510444f090d1fd0e3d890416ec03c822e266"],
-    angry: [5316, "193c7c065ea4d9db70b8457c131b705a56db4db2cb78f683700d7bc966086f3c"],
+    happy: [5413, "937092100f8d1680ec36e2fa932e141496432d4ec987ef89d057409f42ef002f"],
+    laughing: [5627, "d8dc6b85d02046d1b09668a19fb80c2e3512380a5b3a82bf6870682478abfcc0"],
+    sad: [5048, "acf406cec8c0a7006505dc3570f133854298ec4712c90e11959e8838fd43580b"],
+    dizzy: [5551, "658f462b0c5a13054ced69a98642ad26c0dfbb1b5aed4593166165f92c0aadee"],
+    focused: [4919, "1b654b402b1df867c5db20326518019c7ae02edb41219bed59861d4da8d2f51d"],
+    angry: [5316, "ca8e8192db9ac7733248184f93f19793a046d7c7cdba953505befede1561aece"],
   },
   "jocelyn-aquiline": {
-    happy: [5749, "3b8322c715df3ddf354e196222dc97ac1a15cdf0776a8627c8c437128d933d60"],
-    laughing: [5963, "d80c6a474cc8fe21281b16dc1634e726448d9ea7ee287b22164bde5be36b171e"],
-    sad: [5384, "1086f798ba4d4f52703c9455b03ac41f45e549787c04c5d19fda62a53229d933"],
-    dizzy: [5887, "fa920cf1b410df1d48c02954f3ef1c7fa8eab24c37dd82cc85354d8a90644b4e"],
-    focused: [4735, "50d5e47745790ac3e9e1ecd3c32deb08554c7e9753f3956720ddca6eed49b0eb"],
-    angry: [5368, "ea1cd084b54f8ac2b42f2437b859274ab74a23a25c0768d9faa95efe4fde4eb5"],
+    happy: [5749, "6d0c676210cf4bcbafb6406dcb3b4deb66f46c521d6617b489eaede2f1b7adcd"],
+    laughing: [5963, "0e15c5d1b2a6bc7d0fbe281e34d1c346701b4fd05842aa250ae7bcb319044e69"],
+    sad: [5384, "62897720f120dd76d68d289e44b442c11c334a65adbbad41d309002ab53e2b77"],
+    dizzy: [5887, "0075306783cebc0f8f4180ac3c36ae742fe96b433900aaee5245b63d98a15c4d"],
+    focused: [4735, "33db34ad772225201d8ff44c4c33f3eb371a8561a6c2a968eda90ab6163ebedf"],
+    angry: [5368, "670de4548121c56c217108d9e107905e3addd0a16ae5b9d10374806e593170d3"],
   },
 } as const;
 
 const HUMAN_FINGERPRINTS = {
   "stable-seed": {
-    neutral: [3669, "f85b0909ebafc82562b0f72fb0ae4904a93533d20a3f463c28e90a82411d341c"],
-    focused: [3922, "2a1e76fea8358ad3cd00c03547276cb93ae41c5b1b7822ed038c23f3b59bf15b"],
-    happiness: [3429, "b011626bbf84d819c8fa3c33dba7d08fa92c8b0b31160e377c73ae9ff0562ddc"],
-    sadness: [3731, "66b86f1b183f232069769da496a15df2d4b9dfac3713b654e58c8fdc2c64d825"],
-    anger: [3528, "8a1ffdc47bd15565bbd7cc44011a601c8e0344ef631f28b354a7fed3029cc76c"],
-    fear: [3711, "2245bfa16d5d55c840fcfd869449cfe2626780257b81d2772a17314a561a4e05"],
-    surprise: [3648, "2826e50492b2767bbd4bf2e581624c4ab3aa85243d1ac0e0aeae79667c76f345"],
+    neutral: [3669, "d69d677987f4b523d194346d3c4284ea5489e19f7ad0f464b04bbe88c2d4b8a4"],
+    focused: [3922, "3a3434ddaefb4af21f998adbfe62da275861b1b4180487628aa0e95361df97d2"],
+    happiness: [3429, "ac293c05e785ac914b0b56ac7913f3fd5d719d64252ffac78e6a969ab38bb21d"],
+    sadness: [3731, "ae540fd0773d9b50e62da62f705bc62da4a951d05cec1101c6fcf3a0c7cbe087"],
+    anger: [3528, "5866a714b8c70535e0075c3ce708d291cb2c7bc95de8740e9beaabbafe5f86cd"],
+    fear: [3711, "4e216ada279fd10fe0ad1865f33c194d1e86ba5450791517116e63f7493c74f5"],
+    surprise: [3648, "2599e64f75d35f32062e4f230511bc87259961c3c27f9f6f6075e23026edb222"],
   },
   "čovek-seed": {
-    neutral: [4027, "222c9f2d66203c4069fcec34303e11bc4f87527f059d5dda5545354ab166b43d"],
-    focused: [4439, "a5fdf398c72345bac49d449aa8a6279daf577802ec7417f928fa883373a04512"],
-    happiness: [3946, "c8fae556c542e3febbb091e11923a4492d851b24bc512a3e9d0852b79123b3e6"],
-    sadness: [4248, "83165b2b72b307b34714810cc7027abb8673914aae0d7ec0d7f6d687b831e0b4"],
-    anger: [4045, "e612d56d5f74ecfd7f060407b72e932a10ec1eeff9953d9722a4b36b8283387e"],
-    fear: [4228, "8b0cc9b914f5d37a7a413de11f8c8687e341e12ca00c943fc8a22627d4fc580c"],
-    surprise: [4165, "d9d9a96f58dc3e99fd3d102c41c1230f55ce55a339680570553c358073515e1d"],
+    neutral: [4027, "077426721ea27e742831d45b2c302a387fadd901d256559228c6d39fd3b63f30"],
+    focused: [4439, "051b188716e9b7fe6736015162d53d9c1cef7c3581f35cca2c02b25719e371a9"],
+    happiness: [3946, "a4e8d389bb1fdde2273bada8afaaeb494cf3861462a37cf8a388666c02cda1f1"],
+    sadness: [4248, "adfacfcd983f4c85bfa9b47a2953ee4e4c601ca5ea814df010337499ca77b554"],
+    anger: [4045, "53a431022f66d5608b68678c6160c628e97a016ad2bc39f1b739d7730db552ec"],
+    fear: [4228, "ddf63593de39a96684b150769363bef302e333cee968130e3cd49c847318be35"],
+    surprise: [4165, "52295e48f4d9b36e1df8383fadd427b2dcf308e1018b1c837875a0ff3bc16fc7"],
   },
 } as const;
 
@@ -81,6 +81,25 @@ async function fingerprint(value: string): Promise<Fingerprint> {
     sha256: Array.from(digest).map((byte) => byte.toString(16).padStart(2, "0")).join(""),
   };
 }
+
+Deno.test("built-in bots wear distinct pastel skins", () => {
+  const generator = createAvatarGenerator();
+  const mason = generator.forBot("mason-steady");
+  const christian = generator.forBot("christian-alert");
+  const jocelyn = generator.forBot("jocelyn-aquiline");
+  assertStringIncludes(mason.src, 'fill="#a9d6c4"');
+  assertStringIncludes(christian.src, 'fill="#b9c8ee"');
+  assertStringIncludes(jocelyn.src, 'fill="#f2c4a8"');
+});
+
+Deno.test("generated humans draw dark-brown ink on a paper background", () => {
+  const avatar = createAvatarGenerator().forHuman({ picture: null, seed: "stable-seed" });
+  assertEquals(avatar.kind, "human-generated");
+  if (avatar.kind !== "human-generated") return;
+  const svg = decodeURIComponent(avatar.src);
+  assertStringIncludes(svg, '<rect fill="#f5e0bd" width="600" height="600"');
+  assertStringIncludes(svg, "#3a2e26");
+});
 
 Deno.test("built-in profiles preserve every bot SVG byte", async () => {
   const generator = createAvatarGenerator();

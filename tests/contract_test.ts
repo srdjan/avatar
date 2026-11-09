@@ -26,7 +26,7 @@ import {
 
 const EXPECTED_HASHES: Readonly<Record<keyof typeof AVATAR_ASSETS, string>> = {
   facialRigScript: "a05893810c978c11f13cb9dd2213ea6b5fe5fc6320531ed13f0a07aaffdfe609",
-  facialRigStyles: "6753dc84ede97d0ae70784e1a2a0d85353fd90193fc11f8f3198a11844ef0fc1",
+  facialRigStyles: "67526d26dd038ab0e69e3b6cd0a2cc73f3132647033a96a6423a7f2e781f83e9",
   haha: "838c4863398dba33f794faf5a640d592fa577e420a57114ef7d113d146532ca2",
   hahaha: "20351581b4b41bb7ed9eae615793598d9140c7202a5557f548d7d903aedb72cc",
   nenene: "f218486f54ad12c226d31bbc065251bb6187e2fbdd08c60db040eb075c193bc3",
