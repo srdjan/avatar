@@ -17,7 +17,7 @@ import {
   stateOnlyReaction,
 } from "./consumer.ts";
 
-Deno.test("linked external consumer executes the complete public v0.5.0 contract", async () => {
+Deno.test("linked external consumer executes the complete public v0.6.0 contract", async () => {
   assertEquals(generatedAvatar.kind, "human-generated");
   assert(generatedDescription.startsWith("human:"));
 

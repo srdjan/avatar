@@ -1,6 +1,6 @@
 # Assumptions
 
-- Version 0.5.0 is consumed through local Deno links and is intentionally unpublished. The package
+- Version 0.6.0 is consumed through local Deno links and is intentionally unpublished. The package
   has no registry fallback, publish task, or automated release flow.
 - The breaking cutover is direct. `RigVoiceCue`, `ReactionSpec`, `DEFAULT_VOICE_PACK`, arbitrary
   `FacialRig.play()`, control `trigger`, and per-field reaction transport have no compatibility

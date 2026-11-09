@@ -205,7 +205,7 @@ Deno.test("public reaction, profile, init, and semantic contracts are complete",
 Deno.test("public package boundary has exactly three entry points", async () => {
   const config = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
   assertEquals(config.name, "@srdjan/avatar");
-  assertEquals(config.version, "0.5.0");
+  assertEquals(config.version, "0.6.0");
   assertEquals(config.exports, {
     ".": "./mod.ts",
     "./server": "./server/mod.ts",

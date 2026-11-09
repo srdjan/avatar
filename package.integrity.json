@@ -48,7 +48,7 @@
     },
     {
       "path": "deno.json",
-      "sha256": "cbc538c0ab8dfb2f13430a650eff4f89e99ecdcef81d12b0e5358f198a987426"
+      "sha256": "540b19c3f016a5ff5611dc3723aee25d3205f0964068d42e0cd2b729af5d8c5b"
     },
     {
       "path": "internal/generator.ts",

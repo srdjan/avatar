@@ -1,7 +1,7 @@
 # @srdjan/avatar
 
 `@srdjan/avatar` is a local Deno package for deterministic human and bot avatars, facial-rig SSR,
-and the browser assets used by the rig. Version `0.5.0` is intentionally unpublished.
+and the browser assets used by the rig. Version `0.6.0` is intentionally unpublished.
 
 ## Local use
 
