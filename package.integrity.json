@@ -52,7 +52,7 @@
     },
     {
       "path": "internal/generator.ts",
-      "sha256": "9de42ddd2721c9a0be7eee3d791a879b00d77dbff285877914a3a52b368fa743"
+      "sha256": "8e8764cb7dba1ebfb3754be43cb79aa8a80e7074bcf843938c56af33630bda32"
     },
     {
       "path": "mod.ts",

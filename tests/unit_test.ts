@@ -55,22 +55,22 @@ const BOT_FINGERPRINTS = {
 
 const HUMAN_FINGERPRINTS = {
   "stable-seed": {
-    neutral: [3669, "d69d677987f4b523d194346d3c4284ea5489e19f7ad0f464b04bbe88c2d4b8a4"],
-    focused: [3922, "3a3434ddaefb4af21f998adbfe62da275861b1b4180487628aa0e95361df97d2"],
-    happiness: [3429, "ac293c05e785ac914b0b56ac7913f3fd5d719d64252ffac78e6a969ab38bb21d"],
-    sadness: [3731, "ae540fd0773d9b50e62da62f705bc62da4a951d05cec1101c6fcf3a0c7cbe087"],
-    anger: [3528, "5866a714b8c70535e0075c3ce708d291cb2c7bc95de8740e9beaabbafe5f86cd"],
-    fear: [3711, "4e216ada279fd10fe0ad1865f33c194d1e86ba5450791517116e63f7493c74f5"],
-    surprise: [3648, "2599e64f75d35f32062e4f230511bc87259961c3c27f9f6f6075e23026edb222"],
+    neutral: [3669, "db17dc2a0757f34d74179f97cf2e88784e39617ae0cbed51c56dc34afbea1949"],
+    focused: [3922, "3dd9ab0551c74d6a6d9d90281fe81663ab35e74b1bf96c579a9653e13c3a011b"],
+    happiness: [3429, "8ff999746fb09e690cbe33a563f89a540e6dfc68568b50cb4161dcdf9ef51f29"],
+    sadness: [3731, "73334d83322ae75346f70283beb07fe8df467ceba3eb2b68b5bc725a66a18dff"],
+    anger: [3528, "9554c9f926c14a07a7e29f6d51c99fe47f1cbaa6278a91af9f57ac13a11b5ba0"],
+    fear: [3711, "728c8b88b140d8f3b080d14baa7068b2b1c745bdfa2fec98b4778a4f1517e4ef"],
+    surprise: [3648, "307d12c5173a41ad8492ca9b89835650a5389057213c90389364b9cf61b1738a"],
   },
   "čovek-seed": {
-    neutral: [4027, "077426721ea27e742831d45b2c302a387fadd901d256559228c6d39fd3b63f30"],
-    focused: [4439, "051b188716e9b7fe6736015162d53d9c1cef7c3581f35cca2c02b25719e371a9"],
-    happiness: [3946, "a4e8d389bb1fdde2273bada8afaaeb494cf3861462a37cf8a388666c02cda1f1"],
-    sadness: [4248, "adfacfcd983f4c85bfa9b47a2953ee4e4c601ca5ea814df010337499ca77b554"],
-    anger: [4045, "53a431022f66d5608b68678c6160c628e97a016ad2bc39f1b739d7730db552ec"],
-    fear: [4228, "ddf63593de39a96684b150769363bef302e333cee968130e3cd49c847318be35"],
-    surprise: [4165, "52295e48f4d9b36e1df8383fadd427b2dcf308e1018b1c837875a0ff3bc16fc7"],
+    neutral: [4027, "3bdec45e1d6128384145ae8363406908d90f0e7d9311c148e1bdef0f094eeaf1"],
+    focused: [4439, "271921b0e7421396be8c6a2258acf004180b6d805cf9d28db1457a4b362b753f"],
+    happiness: [3946, "2f28ff080bef5878afbab69228a116411839d99375347308742a45ffef93f397"],
+    sadness: [4248, "5edc31d5c0b035871c25a1c2f9bd793cf0f03ac60213c6b0949b8d20a4e823ca"],
+    anger: [4045, "d761a0239aea3b0ccf0fd698b56a81236a56d9afd635a87498fe87c848917eb3"],
+    fear: [4228, "0edf75364dbe61b177bd8071a0959b70f1ff032f7ad96f39760f93d9c9f890f2"],
+    surprise: [4165, "a84b1d36dbbed4ce0e7eae29eda8802add7f73e3113fa6f13ddcaab193b2c254"],
   },
 } as const;
 
@@ -104,12 +104,12 @@ Deno.test("built-in bots wear distinct human skins and turn blue only when angry
   assert(!jocelyn.src.includes("#b9c8ee"));
 });
 
-Deno.test("generated humans draw dark-brown ink on a paper background", () => {
+Deno.test("generated humans draw dark-brown ink on a human skin tone", () => {
   const avatar = createAvatarGenerator().forHuman({ picture: null, seed: "stable-seed" });
   assertEquals(avatar.kind, "human-generated");
   if (avatar.kind !== "human-generated") return;
   const svg = decodeURIComponent(avatar.src);
-  assertStringIncludes(svg, '<rect fill="#f5e0bd" width="600" height="600"');
+  assertStringIncludes(svg, '<rect fill="#c68642" width="600" height="600"');
   assertStringIncludes(svg, "#3a2e26");
 });
 

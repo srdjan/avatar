@@ -96,8 +96,9 @@ const BOT_SKINS = ["ffdbb4", "edb98a", "f2c4a8", "d08b5b", "ae5d29", "614335"];
 // Only anger leaves the human palette, so a blue face reads as anger.
 const ANGRY_SKIN = ["b9c8ee"];
 const HUMAN_INK = ["3a2e26"];
+// Human skin tones that keep the dark-brown ink at 3:1 contrast or more.
 const HUMAN_LOOK: loreleiNeutral.Options = {
-  backgroundColor: ["f5e0bd", "e7dccb", "ead2c4", "dfe3d0"],
+  backgroundColor: ["ffdbb4", "f2c4a8", "edb98a", "e0ac69", "d08b5b", "c68642"],
   eyesColor: HUMAN_INK,
   eyebrowsColor: HUMAN_INK,
   mouthColor: HUMAN_INK,
