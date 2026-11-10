@@ -90,9 +90,11 @@ type GeneratorConfig = Readonly<{
 }>;
 
 // DiceBear picks a skin by seed, and the index depends on the palette length.
-// Six colors in this order give the built-in bots distinct skins: Mason mint,
-// Jocelyn peach, Christian blue. A unit test pins that result.
-const BOT_SKINS = ["cbb8ea", "a9d6c4", "f2c4a8", "b9c8ee", "efbfcb", "e8dcae"];
+// Six human tones in this order give the built-in bots distinct skins: Mason
+// light tan, Jocelyn peach, Christian medium tan. A unit test pins that result.
+const BOT_SKINS = ["ffdbb4", "edb98a", "f2c4a8", "d08b5b", "ae5d29", "614335"];
+// Only anger leaves the human palette, so a blue face reads as anger.
+const ANGRY_SKIN = ["b9c8ee"];
 const HUMAN_INK = ["3a2e26"];
 const HUMAN_LOOK: loreleiNeutral.Options = {
   backgroundColor: ["f5e0bd", "e7dccb", "ead2c4", "dfe3d0"],
@@ -292,6 +294,7 @@ function createBotEmotionMap(
       eyes: ["squint"],
       eyebrows: ["angryNatural"],
       mouth: ["serious"],
+      backgroundColor: ANGRY_SKIN,
     }),
   };
 }

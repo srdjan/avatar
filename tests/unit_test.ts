@@ -7,6 +7,7 @@ import {
   assertThrows,
 } from "jsr:@std/assert@1.0.14";
 import {
+  type Avatar,
   AVATAR_EXPRESSIONS,
   BOT_EMOTIONS,
   type BotAvatarProfileCatalog,
@@ -27,19 +28,19 @@ type Fingerprint = Readonly<{ length: number; sha256: string }>;
 
 const BOT_FINGERPRINTS = {
   "mason-steady": {
-    happy: [5431, "309c88f6be883949a2be298f298855c4b9987399f7e691f7f45c9cc916e4b0b5"],
-    laughing: [5645, "f23bd4f746d2deffcdc9611f73ea13b8217d095749c164f8a5f149b3a989bf1c"],
-    sad: [5066, "d8dfd6c965b76eb0013def80f16271ea55665627639de6e7f9aa3f295279dada"],
-    dizzy: [5569, "241a8fa6fb1652c103a40066cdf822555ed9b689a5398f6ca2105edf7c017461"],
-    focused: [4812, "65d26cccf414ecdef5efbdaec71d8fff1f0f8e4672c3da8dacf45a55791d366c"],
-    angry: [5316, "d9d6753b13d0f5c29ebbc81377f9a821b45216e1165f0675d878b38d699d4359"],
+    happy: [5431, "9aaff191c7f10c3c8fa22e543033fd1df148763ca0f40b4e9424e0c6ad2897ce"],
+    laughing: [5645, "d840030b0893c75c2436fc4de1092067eff2c2164f4433910edb050ed24e382d"],
+    sad: [5066, "bfde8490bc6ecdc5e7a86fb68d124aafc9e432586b6ca01d548ba9da34deea00"],
+    dizzy: [5569, "5517a485aabd22f074272bf1d892b0a9976df9c3b4024ed932a06b8b6658eae7"],
+    focused: [4812, "f41f3b7f379ebeb26648413fa4df63afc55ca423188f59f971dd7e3c2e9b4b67"],
+    angry: [5316, "ca8e8192db9ac7733248184f93f19793a046d7c7cdba953505befede1561aece"],
   },
   "christian-alert": {
-    happy: [5413, "937092100f8d1680ec36e2fa932e141496432d4ec987ef89d057409f42ef002f"],
-    laughing: [5627, "d8dc6b85d02046d1b09668a19fb80c2e3512380a5b3a82bf6870682478abfcc0"],
-    sad: [5048, "acf406cec8c0a7006505dc3570f133854298ec4712c90e11959e8838fd43580b"],
-    dizzy: [5551, "658f462b0c5a13054ced69a98642ad26c0dfbb1b5aed4593166165f92c0aadee"],
-    focused: [4919, "1b654b402b1df867c5db20326518019c7ae02edb41219bed59861d4da8d2f51d"],
+    happy: [5413, "301ebcac96aa5d49cdb09591e970625b1feebdfc3647f99ba7ca1d7903c8c111"],
+    laughing: [5627, "07483c46d284ae7c9686a5d61503fb068e5a86c987ef59a166307f4287b1bcbf"],
+    sad: [5048, "651127144bf93bfc3b2bd159f0d93c024905123f55279be701a8437cc5648165"],
+    dizzy: [5551, "e07088a899fced4db45a35b35d0f93a3793bce4108de50333213c1eaf358124e"],
+    focused: [4919, "f32e60b81a092cb46b94d0c52d5992b67709ca2a29570dcb4596884988693190"],
     angry: [5316, "ca8e8192db9ac7733248184f93f19793a046d7c7cdba953505befede1561aece"],
   },
   "jocelyn-aquiline": {
@@ -48,7 +49,7 @@ const BOT_FINGERPRINTS = {
     sad: [5384, "62897720f120dd76d68d289e44b442c11c334a65adbbad41d309002ab53e2b77"],
     dizzy: [5887, "0075306783cebc0f8f4180ac3c36ae742fe96b433900aaee5245b63d98a15c4d"],
     focused: [4735, "33db34ad772225201d8ff44c4c33f3eb371a8561a6c2a968eda90ab6163ebedf"],
-    angry: [5368, "670de4548121c56c217108d9e107905e3addd0a16ae5b9d10374806e593170d3"],
+    angry: [5368, "f029c5b69921e46a6445315321c40379aae2ac7fd9e195c6b129828e9b26bbb0"],
   },
 } as const;
 
@@ -73,6 +74,11 @@ const HUMAN_FINGERPRINTS = {
   },
 } as const;
 
+function botAvatar(avatar: Avatar): Extract<Avatar, { kind: "bot" }> {
+  if (avatar.kind !== "bot") throw new Error(`expected a bot avatar, got ${avatar.kind}`);
+  return avatar;
+}
+
 async function fingerprint(value: string): Promise<Fingerprint> {
   const bytes = new TextEncoder().encode(value);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -82,14 +88,20 @@ async function fingerprint(value: string): Promise<Fingerprint> {
   };
 }
 
-Deno.test("built-in bots wear distinct pastel skins", () => {
+Deno.test("built-in bots wear distinct human skins and turn blue only when angry", () => {
   const generator = createAvatarGenerator();
-  const mason = generator.forBot("mason-steady");
-  const christian = generator.forBot("christian-alert");
-  const jocelyn = generator.forBot("jocelyn-aquiline");
-  assertStringIncludes(mason.src, 'fill="#a9d6c4"');
-  assertStringIncludes(christian.src, 'fill="#b9c8ee"');
+  const mason = botAvatar(generator.forBot("mason-steady"));
+  const christian = botAvatar(generator.forBot("christian-alert"));
+  const jocelyn = botAvatar(generator.forBot("jocelyn-aquiline"));
+  assertStringIncludes(mason.src, 'fill="#edb98a"');
+  assertStringIncludes(christian.src, 'fill="#d08b5b"');
   assertStringIncludes(jocelyn.src, 'fill="#f2c4a8"');
+  assertStringIncludes(mason.emotions.angry, 'fill="#b9c8ee"');
+  assertStringIncludes(christian.emotions.angry, 'fill="#b9c8ee"');
+  assertStringIncludes(jocelyn.emotions.angry, 'fill="#b9c8ee"');
+  assert(!mason.src.includes("#b9c8ee"));
+  assert(!christian.src.includes("#b9c8ee"));
+  assert(!jocelyn.src.includes("#b9c8ee"));
 });
 
 Deno.test("generated humans draw dark-brown ink on a paper background", () => {
